@@ -18,6 +18,7 @@ import type { TradingPair } from "@/types";
 import { AssetIcon } from "@/components/shared/AssetIcon";
 import { TokenSearchModal } from "@/components/shared/TokenSearchModal";
 import { useRecentTokens } from "@/hooks/useRecentTokens";
+import { SwapPresetTemplates } from "./SwapPresetTemplates";
 
 export interface TokenPairSelectorProps {
   /** Available trading pairs from the API */
@@ -207,6 +208,12 @@ export function TokenPairSelector({
   return (
     <Card className={cn("p-4", className)}>
       <div className="space-y-4">
+        <SwapPresetTemplates 
+          onSelect={onPairChange}
+          selectedBase={selectedBase}
+          selectedQuote={selectedQuote}
+        />
+
         <div className="flex items-center gap-3">
           <div className="flex-1">
             {loading ? (

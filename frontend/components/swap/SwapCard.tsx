@@ -16,6 +16,7 @@ import { HighImpactConfirmModal } from './HighImpactConfirmModal';
 import { TransactionConfirmationModal } from './TransactionConfirmationModal';
 import { QuoteStreamStatusIndicator } from './QuoteStreamStatusIndicator';
 import { SessionRecoveryModal } from './SessionRecoveryModal';
+import { SwapPresetTemplates } from './SwapPresetTemplates';
 import { useSwapState } from '@/hooks/useSwapState';
 import { useOptimisticSwap } from '@/hooks/useOptimisticSwap';
 import type { PreSubmitSnapshot } from '@/types/transaction';
@@ -446,6 +447,15 @@ export function SwapCard() {
               </Button>
             </div>
           </div>
+
+          <SwapPresetTemplates 
+            onSelect={(base, quote) => {
+              setFromToken(base);
+              setToToken(quote);
+            }}
+            selectedBase={fromToken}
+            selectedQuote={toToken}
+          />
 
           {/* Pay Section */}
           <div className={cn("space-y-2 group", isCompact && "space-y-1")}>
