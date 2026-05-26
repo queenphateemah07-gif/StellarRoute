@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, cleanup } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PriceImpactHeatmapSlider } from './PriceImpactHeatmapSlider';
 import { stellarRouteClient } from '@/lib/api/client';
@@ -15,6 +15,10 @@ vi.mock('@/lib/api/client', () => {
 
 describe('PriceImpactHeatmapSlider', () => {
   const mockOnChange = vi.fn();
+
+  afterEach(() => {
+    cleanup();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -97,7 +101,9 @@ describe('PriceImpactHeatmapSlider', () => {
     );
 
     expect(screen.getByText('Amount Slider')).toBeInTheDocument();
-    expect(screen.getByText('50%')).toBeInTheDocument();
+    // The percentage indicator and the heatmap label both show '50%', so use getAllByText
+    const matches = screen.getAllByText(/50\s*%/);
+    expect(matches.length).toBeGreaterThanOrEqual(1);
 
     const slider = screen.getByTestId('price-impact-heatmap-slider-input');
     expect(slider).toHaveValue('50');
@@ -146,7 +152,7 @@ describe('PriceImpactHeatmapSlider', () => {
 
     vi.mocked(stellarRouteClient.getQuotesBatch).mockReturnValue(promise);
 
-    const { rerender } = render(
+    const { container } = render(
       <PriceImpactHeatmapSlider
         fromToken="native"
         toToken="USDC:G"
@@ -157,29 +163,18 @@ describe('PriceImpactHeatmapSlider', () => {
     );
 
     // Initial loading state: segments should have animate-pulse
-    const seg10 = screen.getByTestId('heatmap-segment-10');
+    const seg10 = within(container).getByTestId('heatmap-segment-10');
     expect(seg10).toHaveClass('animate-pulse');
 
-    // Resolve quotes
+    // Resolve quotes and wait for state updates
     await act(async () => {
       resolvePromise({ quotes: mockQuotes, total: 10 });
     });
 
-    // Re-render to propagate state updates
-    rerender(
-      <PriceImpactHeatmapSlider
-        fromToken="native"
-        toToken="USDC:G"
-        balance={100}
-        currentAmount="50"
-        onChangeAmount={mockOnChange}
-      />
-    );
-
-    const seg10Resolved = screen.getByTestId('heatmap-segment-10');
-    const seg50Resolved = screen.getByTestId('heatmap-segment-50');
-    const seg80Resolved = screen.getByTestId('heatmap-segment-80');
-    const seg100Resolved = screen.getByTestId('heatmap-segment-100');
+    const seg10Resolved = within(container).getByTestId('heatmap-segment-10');
+    const seg50Resolved = within(container).getByTestId('heatmap-segment-50');
+    const seg80Resolved = within(container).getByTestId('heatmap-segment-80');
+    const seg100Resolved = within(container).getByTestId('heatmap-segment-100');
 
     expect(seg10Resolved).not.toHaveClass('animate-pulse');
     expect(seg10Resolved).toHaveClass('bg-emerald-500');
@@ -196,7 +191,7 @@ describe('PriceImpactHeatmapSlider', () => {
       total: 10,
     });
 
-    render(
+    const { container } = render(
       <PriceImpactHeatmapSlider
         fromToken="native"
         toToken="USDC:G"
@@ -206,7 +201,7 @@ describe('PriceImpactHeatmapSlider', () => {
       />
     );
 
-    const seg50 = screen.getByTestId('heatmap-segment-50');
+    const seg50 = within(container).getByTestId('heatmap-segment-50');
     fireEvent.click(seg50);
 
     expect(mockOnChange).toHaveBeenCalledWith('50');

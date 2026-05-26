@@ -17,6 +17,8 @@ import { TransactionConfirmationModal } from './TransactionConfirmationModal';
 import { QuoteStreamStatusIndicator } from './QuoteStreamStatusIndicator';
 import { SessionRecoveryModal } from './SessionRecoveryModal';
 import { useSwapState } from '@/hooks/useSwapState';
+import { useOptimisticSwap } from '@/hooks/useOptimisticSwap';
+import type { PreSubmitSnapshot } from '@/types/transaction';
 import {
   SESSION_RECOVERY_THRESHOLD_MS,
   type TradeFormSnapshot,
