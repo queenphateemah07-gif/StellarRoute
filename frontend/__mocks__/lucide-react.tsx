@@ -61,3 +61,5 @@ export const InfoIcon = Icon;
 export const Loader2Icon = Icon;
 export const OctagonXIcon = Icon;
 export const TriangleAlertIcon = Icon;
+
+export const Inbox = Icon;
