@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { formatDistanceToNow } from "date-fns"
 import { ArrowRight, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -10,6 +9,7 @@ import { Card } from "@/components/ui/card"
 import { ActivityTableSkeleton } from "@/components/shared/ActivityTableSkeleton"
 import { CopyButton } from "@/components/shared/CopyButton"
 import { ExplorerLink } from "@/components/shared/ExplorerLink"
+import { RelativeTime } from "@/components/shared/RelativeTime"
 import { useTransactionHistory } from "@/hooks/useTransactionHistory"
 import { useVirtualWindow } from "@/hooks/useVirtualWindow"
 import { TransactionRecord } from "@/types/transaction"
@@ -163,7 +163,7 @@ export function TransactionHistory({ onRetry }: { onRetry?: (tx: TransactionReco
                       <div className="flex flex-col">
                         <span>{new Date(tx.timestamp).toLocaleDateString()}</span>
                         <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDistanceToNow(tx.timestamp, { addSuffix: true })}
+                          <RelativeTime timestamp={tx.timestamp} />
                         </span>
                       </div>
                     </TableCell>

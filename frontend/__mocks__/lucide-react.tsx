@@ -63,3 +63,9 @@ export const InfoIcon = Icon;
 export const Loader2Icon = Icon;
 export const OctagonXIcon = Icon;
 export const TriangleAlertIcon = Icon;
+
+// Hero section icons
+export const Zap = Icon;
+export const Shield = Icon;
+export const Maximize2 = Icon;
+export const Minimize2 = Icon;
