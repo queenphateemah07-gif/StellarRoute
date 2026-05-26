@@ -41,6 +41,7 @@ export const Clock = Icon;
 export const Copy = Icon;
 export const History = Icon;
 export const Search = Icon;
+export const Download = Icon;
 
 export const AlertTriangle = Icon;
 export const DollarSign = Icon;
@@ -64,8 +65,9 @@ export const Loader2Icon = Icon;
 export const OctagonXIcon = Icon;
 export const TriangleAlertIcon = Icon;
 
-// Hero section icons
-export const Zap = Icon;
+// BatchSwapPreview + ViewState icons
+export const Lock = Icon;
+export const Inbox = Icon;
+export const Plus = Icon;
 export const Shield = Icon;
-export const Maximize2 = Icon;
-export const Minimize2 = Icon;
+export const Zap = Icon;
