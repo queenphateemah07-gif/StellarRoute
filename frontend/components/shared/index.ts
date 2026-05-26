@@ -11,3 +11,4 @@ export { RouteRow } from './RouteRow';
 export { SlippageControl } from './SlippageControl';
 export { ExplorerLink } from './ExplorerLink';
 export { SwapStateView } from './SwapStateView';
+export { WalletSyncBanner } from './WalletSyncBanner';
