@@ -20,8 +20,7 @@ import { useOptimisticSwap } from '@/hooks/useOptimisticSwap';
 import type { PreSubmitSnapshot } from '@/types/transaction';
 import { useOptionalTradingPair } from '@/contexts/TradingPairContext';
 import { useExpertSettings } from '@/hooks/useExpertSettings';
-import { useOptimisticSwap } from '@/hooks/useOptimisticSwap';
-import type { PreSubmitSnapshot } from '@/types/transaction';
+import { useBrowserNotifications } from '@/hooks/useBrowserNotifications';
 import {
   SESSION_RECOVERY_THRESHOLD_MS,
   type TradeFormSnapshot,
@@ -127,6 +126,14 @@ export function SwapCard() {
     updateExtendedRouteDetails,
   } = useExpertSettings();
 
+  const {
+    browserNotifications,
+    permissionState: notificationPermissionState,
+    isDisabled: notificationsDisabled,
+    enableNotifications: onEnableNotifications,
+    disableNotifications: onDisableNotifications,
+  } = useBrowserNotifications();
+
   const [isConnected, setIsConnected] = useState(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -170,6 +177,7 @@ export function SwapCard() {
         setSelectedRoute(id ? { id, venue: '', expectedAmount: '' } : null),
       refreshQuote: quote.refresh,
     },
+    notificationPreference: { enabled: browserNotifications },
   });
 
   // Handle background transaction toasts when bypassConfirmation is enabled
@@ -544,6 +552,11 @@ export function SwapCard() {
                   reset();
                   setSelectedRoute(null);
                 }}
+                browserNotifications={browserNotifications}
+                notificationPermissionState={notificationPermissionState}
+                notificationsDisabled={notificationsDisabled}
+                onEnableNotifications={onEnableNotifications}
+                onDisableNotifications={onDisableNotifications}
               />
               <Button
                 variant="ghost"
