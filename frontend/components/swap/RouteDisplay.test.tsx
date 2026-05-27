@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fc from 'fast-check';
 import { RouteDisplay } from './RouteDisplay';
@@ -36,7 +36,10 @@ const DEFAULT_PROPS = {
 // ---------------------------------------------------------------------------
 
 describe('RouteDisplay — reduced motion active', () => {
-  afterEach(() => setReducedMotion(false));
+  afterEach(() => {
+    cleanup();
+    setReducedMotion(false);
+  });
 
   it('omits transition-all duration-200 from panel container', () => {
     setReducedMotion(true);
@@ -60,8 +63,8 @@ describe('RouteDisplay — reduced motion active', () => {
     const chevronBtn = screen.getByRole('button', { name: /show route details/i });
     const icon = chevronBtn.querySelector('[data-testid="icon"]');
     expect(icon).toBeTruthy();
-    expect(icon!.className).not.toContain('transition-transform');
-    expect(icon!.className).not.toContain('duration-200');
+    expect(icon!.getAttribute('class')).not.toContain('transition-transform');
+    expect(icon!.getAttribute('class')).not.toContain('duration-200');
   });
 
   it('omits transition-colors duration-150 from route summary row', () => {
@@ -114,7 +117,10 @@ describe('RouteDisplay — reduced motion active', () => {
 // ---------------------------------------------------------------------------
 
 describe('RouteDisplay — motion allowed', () => {
-  afterEach(() => setReducedMotion(false));
+  afterEach(() => {
+    cleanup();
+    setReducedMotion(false);
+  });
 
   it('includes transition-all duration-200 on panel container', () => {
     setReducedMotion(false);
@@ -137,8 +143,8 @@ describe('RouteDisplay — motion allowed', () => {
     render(<RouteDisplay {...DEFAULT_PROPS} />);
     const chevronBtn = screen.getByRole('button', { name: /show route details/i });
     const icon = chevronBtn.querySelector('[data-testid="icon"]');
-    expect(icon!.className).toContain('transition-transform');
-    expect(icon!.className).toContain('duration-200');
+    expect(icon!.getAttribute('class')).toContain('transition-transform');
+    expect(icon!.getAttribute('class')).toContain('duration-200');
   });
 
   it('includes animate-in slide-in-from-bottom-2 on extended diagnostics panel', async () => {
@@ -176,7 +182,10 @@ describe('RouteDisplay — motion allowed', () => {
 // ---------------------------------------------------------------------------
 
 describe('RouteDisplay — property tests', () => {
-  afterEach(() => setReducedMotion(false));
+  afterEach(() => {
+    cleanup();
+    setReducedMotion(false);
+  });
 
   it(
     // Feature: reduced-motion-swap-animations, Property 7 & 8

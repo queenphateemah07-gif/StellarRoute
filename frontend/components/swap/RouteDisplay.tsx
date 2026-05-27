@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { RouteDisplaySkeleton } from './RouteDisplaySkeleton';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { VenueBadgeLegend } from './VenueBadgeLegend';
 
 export interface AlternativeRoute {
   id: string;
@@ -195,7 +197,20 @@ export function RouteDisplay({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h4 className="text-sm font-medium">Best Route</h4>
-          <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center justify-center h-5 w-5 rounded-md hover:bg-muted focus:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-muted-foreground hover:text-foreground cursor-pointer"
+                aria-label="Route and venue badge information legend"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-4 border border-border/80 bg-popover text-popover-foreground shadow-lg" align="start" side="bottom" sideOffset={8}>
+              <VenueBadgeLegend />
+            </PopoverContent>
+          </Popover>
         </div>
         <div className="flex items-center gap-2">
           <ConfidenceIndicator
