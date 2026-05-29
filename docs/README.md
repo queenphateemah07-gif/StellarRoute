@@ -6,6 +6,7 @@ This directory contains project documentation.
 
 - `architecture/` - Architecture documentation
 - `api/` - API reference documentation
+  - `integrator-guide.md` - Integrator-specific API setup and webhook guide
   - `websocket.md` - Real-time WebSocket quote stream API reference
   - `error_taxonomy.md` - Standardized API error codes
   - `routes_endpoint.md` - REST API route documentation

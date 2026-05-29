@@ -13,8 +13,10 @@
 use axum::{extract::State, Json};
 use sqlx::Row;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, info_span, warn, Instrument};
+use uuid::Uuid;
 
 use stellarroute_routing::health::filter::GraphFilter;
 use stellarroute_routing::health::freshness::{FreshnessGuard, FreshnessOutcome};
@@ -33,10 +35,43 @@ use crate::{
         request::{AssetPath, QuoteParams},
         AssetInfo, ExcludedVenueInfo as ApiExcludedVenueInfo,
         ExclusionDiagnostics as ApiExclusionDiagnostics, ExclusionReason as ApiExclusionReason,
-        PathStep, PreparedQuoteResponse, QuoteRationaleMetadata, QuoteResponse, VenueEvaluation,
+        PathStep, PreparedQuoteResponse, QuoteExpirationWebhookPayload, QuoteRationaleMetadata,
+        QuoteResponse, VenueEvaluation,
     },
     state::AppState,
 };
+
+fn extract_consumer_id(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-api-key")
+        .and_then(|h| h.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("api_key:{value}"))
+}
+
+fn build_quote_webhook_payload(
+    consumer_id: String,
+    base: &str,
+    quote: &str,
+    quote_resp: &QuoteResponse,
+) -> QuoteExpirationWebhookPayload {
+    let quote_id = format!(
+        "{}:{}:{}:{}",
+        base, quote, quote_resp.timestamp, quote_resp.amount
+    );
+
+    QuoteExpirationWebhookPayload {
+        event_id: Uuid::new_v4().to_string(),
+        consumer_id,
+        quote_id,
+        pair: format!("{base}/{quote}"),
+        reason: "ttl_expired".to_string(),
+        expired_at: quote_resp
+            .expires_at
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+    }
+}
 
 /// Get price quote for a trading pair
 ///
@@ -142,7 +177,8 @@ pub async fn get_quote(
         )
         .await
         {
-            Ok((quote_resp, cache_hit)) => {
+            Ok((prepared_quote, cache_hit)) => {
+                let quote_resp = prepared_quote.into_quote()?;
                 let error_class = "none";
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
@@ -183,6 +219,27 @@ pub async fn get_quote(
                     Some(audit_selected),
                     audit_exclusions,
                 );
+
+                if let Some(consumer_id) = extract_consumer_id(&headers) {
+                    let ttl_seconds = quote_resp
+                        .ttl_seconds
+                        .unwrap_or(state.cache_policy.quote_ttl.as_secs() as u32)
+                        as u64;
+                    let payload = build_quote_webhook_payload(
+                        consumer_id.clone(),
+                        &base,
+                        &quote,
+                        &quote_resp,
+                    );
+                    state
+                        .quote_expiration_webhooks
+                        .clone()
+                        .spawn_delayed_dispatch_for_consumer(
+                            consumer_id,
+                            payload,
+                            Duration::from_secs(ttl_seconds),
+                        );
+                }
 
                 let envelope = crate::models::ApiResponse::new(quote_resp, request_id.to_string());
                 Ok(Json(envelope))
@@ -449,7 +506,13 @@ pub async fn get_batch_quotes(
                 };
 
                 match get_quote_inner(state, base_asset, quote_asset, params, false).await {
-                    Ok((quote, _cache_hit)) => BatchQuoteItemResult::ok(i, quote),
+                    Ok((prepared_quote, _cache_hit)) => match prepared_quote.into_quote() {
+                        Ok(quote) => BatchQuoteItemResult::ok(i, quote),
+                        Err(e) => {
+                            let (code, message) = batch_error_from_api_error(&e);
+                            BatchQuoteItemResult::err(i, BatchItemError { code, message })
+                        }
+                    },
                     Err(e) => {
                         let (code, message) = batch_error_from_api_error(&e);
                         BatchQuoteItemResult::err(i, BatchItemError { code, message })
@@ -823,8 +886,8 @@ type FindBestPriceResult = (
     FreshnessOutcome,
     Vec<chrono::DateTime<chrono::Utc>>,
     Vec<crate::replay::artifact::LiquidityCandidate>, // snapshot for replay capture
-    Option<f64>, // midpoint
-    Option<u32>, // spread_bps
+    Option<f64>,                                      // midpoint
+    Option<u32>,                                      // spread_bps
 );
 
 #[tracing::instrument(
@@ -894,7 +957,7 @@ async fn find_best_price(
         .filter(|c| !c.is_inverse)
         .cloned()
         .collect();
-    
+
     let inverse_candidates: Vec<DirectVenueCandidate> = candidates
         .iter()
         .filter(|c| c.is_inverse)
@@ -917,7 +980,7 @@ async fn find_best_price(
         .filter(|c| c.price > 0.0)
         .map(|c| c.price)
         .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    
+
     let best_bid = inverse_candidates
         .iter()
         .filter(|c| c.price > 0.0)
@@ -1248,6 +1311,22 @@ async fn maybe_invalidate_quote_cache(
                         "Liquidity revision changed for {}/{}; invalidated {} quote cache keys",
                         base, quote, deleted
                     );
+
+                    if deleted > 0 {
+                        let payload = QuoteExpirationWebhookPayload {
+                            event_id: Uuid::new_v4().to_string(),
+                            consumer_id: String::new(),
+                            quote_id: format!("invalidated:{base}:{quote}:{liquidity_revision}"),
+                            pair: format!("{base}/{quote}"),
+                            reason: "cache_invalidated".to_string(),
+                            expired_at: chrono::Utc::now().timestamp_millis(),
+                        };
+
+                        state
+                            .quote_expiration_webhooks
+                            .clone()
+                            .spawn_dispatch_to_all(payload);
+                    }
                 }
 
                 let _ = cache
@@ -1309,7 +1388,7 @@ async fn fetch_source_candidates(
             let available_amount_e7: i64 = row.get("available_amount_e7");
             let fee_bps: i32 = row.get("fee_bps");
             let selling_id: uuid::Uuid = row.get("selling_asset_id");
-            
+
             DirectVenueCandidate {
                 venue_type,
                 venue_ref,
