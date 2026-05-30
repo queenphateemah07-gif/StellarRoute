@@ -13,18 +13,19 @@
 use axum::{extract::State, Json};
 use sqlx::Row;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, info_span, warn, Instrument};
 
 use stellarroute_routing::health::filter::GraphFilter;
 use stellarroute_routing::health::freshness::{FreshnessGuard, FreshnessOutcome};
-use stellarroute_routing::health::policy::{ExclusionPolicy, OverrideRegistry};
+use stellarroute_routing::health::policy::ExclusionPolicy;
 use stellarroute_routing::health::scorer::{
     AmmScorer, HealthScorer, HealthScoringConfig, SdexScorer, VenueScorerInput, VenueType,
 };
 
 use crate::{
+    audit::{AuditExclusion, AuditInputs, AuditOutcome, AuditPathStep, AuditSelected},
+    budget::{BudgetConfig, BudgetTracker, PipelineStage},
     cache,
     error::{ApiError, Result},
     middleware::{validation::ValidatedQuoteRequest, RequestId},
@@ -32,7 +33,7 @@ use crate::{
         request::{AssetPath, QuoteParams},
         AssetInfo, ExcludedVenueInfo as ApiExcludedVenueInfo,
         ExclusionDiagnostics as ApiExclusionDiagnostics, ExclusionReason as ApiExclusionReason,
-        PathStep, QuoteRationaleMetadata, QuoteResponse, VenueEvaluation,
+        PathStep, PreparedQuoteResponse, QuoteRationaleMetadata, QuoteResponse, VenueEvaluation,
     },
     state::AppState,
 };
@@ -53,9 +54,48 @@ use crate::{
     ),
     responses(
         (status = 200, description = "Price quote", body = QuoteResponse),
-        (status = 400, description = "Invalid parameters", body = ErrorResponse),
-        (status = 404, description = "No route found", body = ErrorResponse),
-        (status = 500, description = "Internal server error", body = ErrorResponse),
+        (
+            status = 400,
+            description = "Invalid parameters",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "validation_error",
+                    "message": "Amount must be greater than zero"
+                }
+            })
+        ),
+        (
+            status = 404,
+            description = "No route found",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "no_route",
+                    "message": "No trading route found for this pair"
+                }
+            })
+        ),
+        (
+            status = 500,
+            description = "Internal server error",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "internal_error",
+                    "message": "An internal error occurred"
+                }
+            })
+        ),
     )
 )]
 pub async fn get_quote(
@@ -63,7 +103,7 @@ pub async fn get_quote(
     headers: axum::http::HeaderMap,
     request_id: RequestId,
     request: crate::middleware::validation::ValidatedQuoteRequest,
-) -> Result<Json<QuoteResponse>> {
+) -> Result<Json<crate::models::ApiResponse<QuoteResponse>>> {
     let ValidatedQuoteRequest {
         base: base_asset,
         quote: quote_asset,
@@ -93,8 +133,16 @@ pub async fn get_quote(
     );
 
     async move {
-        match get_quote_inner(state, base_asset, quote_asset, params, explain).await {
-            Ok((quote, cache_hit)) => {
+        match get_quote_inner(
+            state.clone(),
+            base_asset.clone(),
+            quote_asset.clone(),
+            params.clone(),
+            explain,
+        )
+        .await
+        {
+            Ok((quote_resp, cache_hit)) => {
                 let error_class = "none";
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
@@ -114,14 +162,43 @@ pub async fn get_quote(
                     "Quote pipeline completed"
                 );
 
-                Ok(Json(quote))
+                // ── Audit log ────────────────────────────────────────────
+                let trace_id = crate::tracing_config::TraceContext::current().trace_id;
+                let audit_inputs = AuditInputs {
+                    base: base.clone(),
+                    quote: quote.clone(),
+                    amount: quote_resp.amount.clone(),
+                    slippage_bps: params.slippage_bps(),
+                    quote_type: quote_resp.quote_type.clone(),
+                };
+                let audit_selected = build_audit_selected(&quote_resp);
+                let audit_exclusions = build_audit_exclusions(&quote_resp);
+                state.audit_writer.emit(
+                    request_id.as_str(),
+                    &trace_id,
+                    latency_ms,
+                    AuditOutcome::Success,
+                    cache_hit,
+                    audit_inputs,
+                    Some(audit_selected),
+                    audit_exclusions,
+                );
+
+                let envelope = crate::models::ApiResponse::new(quote_resp, request_id.to_string());
+                Ok(Json(envelope))
             }
             Err(e) => {
-                let error_class = match &e {
-                    ApiError::Validation(_) | ApiError::InvalidAsset(_) => "validation",
-                    ApiError::NotFound(_) | ApiError::NoRouteFound => "not_found",
-                    ApiError::StaleMarketData { .. } => "stale_market_data",
-                    _ => "internal",
+                let (error_class, audit_outcome) = match &e {
+                    ApiError::Validation(_) | ApiError::InvalidAsset(_) => {
+                        ("validation", AuditOutcome::Error)
+                    }
+                    ApiError::NotFound(_) | ApiError::NoRouteFound => {
+                        ("not_found", AuditOutcome::NoRoute)
+                    }
+                    ApiError::StaleMarketData { .. } => {
+                        ("stale_market_data", AuditOutcome::StaleData)
+                    }
+                    _ => ("internal", AuditOutcome::Error),
                 };
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
@@ -141,6 +218,31 @@ pub async fn get_quote(
                     "Quote pipeline failed"
                 );
 
+                // ── Audit log ────────────────────────────────────────────
+                let trace_id = crate::tracing_config::TraceContext::current().trace_id;
+                let amount_str = params.amount.as_deref().unwrap_or("1").to_string();
+                let quote_type_str = match params.quote_type {
+                    crate::models::request::QuoteType::Sell => "sell",
+                    crate::models::request::QuoteType::Buy => "buy",
+                };
+                let audit_inputs = AuditInputs {
+                    base: base.clone(),
+                    quote: quote.clone(),
+                    amount: amount_str,
+                    slippage_bps: params.slippage_bps(),
+                    quote_type: quote_type_str.to_string(),
+                };
+                state.audit_writer.emit(
+                    request_id.as_str(),
+                    &trace_id,
+                    latency_ms,
+                    audit_outcome,
+                    false,
+                    audit_inputs,
+                    None,
+                    vec![],
+                );
+
                 Err(e)
             }
         }
@@ -150,57 +252,270 @@ pub async fn get_quote(
 }
 
 /// POST /api/v1/batch/quote
+///
+/// Evaluate up to 25 trading pairs in a single request.
+///
+/// All items are executed **concurrently** against a shared market snapshot,
+/// so the response reflects a consistent view of liquidity across all pairs.
+/// Per-item failures (e.g. no route found for one pair) do not abort the
+/// batch — each item carries its own `status` field.
+///
+/// # Request size limits
+///
+/// | Limit                  | Value |
+/// |------------------------|-------|
+/// | Maximum items per call | 25    |
+/// | Minimum items per call | 1     |
+///
+/// # Shared snapshot semantics
+///
+/// The `snapshot_timestamp` in the response is the wall-clock time at which
+/// the batch started.  All per-item quotes are computed against market data
+/// fetched within the same request, ensuring price consistency across pairs.
+///
+/// # Per-item errors
+///
+/// Items that fail (e.g. `no_route`, `stale_data`, `invalid_asset`) are
+/// returned with `status: "error"` and a populated `error` field.  The HTTP
+/// status code is always **200** as long as the batch itself was valid.
+#[utoipa::path(
+    post,
+    path = "/api/v1/batch/quote",
+    tag = "trading",
+    request_body(
+        content = BatchQuoteRequest,
+        description = "Up to 25 quote items to evaluate concurrently",
+        example = json!({
+            "quotes": [
+                {
+                    "base": "native",
+                    "quote": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                    "amount": "100",
+                    "slippage_bps": 50,
+                    "quote_type": "sell"
+                },
+                {
+                    "base": "native",
+                    "quote": "yXLM:GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+                    "amount": "500"
+                }
+            ]
+        })
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Batch quote results (individual items may have status=error)",
+            body = BatchQuoteResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1714000000000_i64,
+                "request_id": "req-abc123",
+                "data": {
+                    "results": [
+                        {
+                            "index": 0,
+                            "status": "ok",
+                            "quote": {
+                                "base_asset": {"asset_type": "native"},
+                                "quote_asset": {
+                                    "asset_type": "credit_alphanum4",
+                                    "asset_code": "USDC",
+                                    "asset_issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+                                },
+                                "amount": "100.0000000",
+                                "price": "8.1234567",
+                                "total": "812.3456700",
+                                "quote_type": "sell",
+                                "path": [],
+                                "timestamp": 1714000000000_i64
+                            }
+                        },
+                        {
+                            "index": 1,
+                            "status": "error",
+                            "error": {
+                                "code": "no_route",
+                                "message": "No trading route found for this pair"
+                            }
+                        }
+                    ],
+                    "items_succeeded": 1,
+                    "items_failed": 1,
+                    "total": 2,
+                    "snapshot_timestamp": 1714000000000_i64
+                }
+            })
+        ),
+        (
+            status = 400,
+            description = "Invalid batch request (empty, too large, or malformed items)",
+            body = ErrorResponse
+        ),
+        (
+            status = 429,
+            description = "Rate limit exceeded",
+            body = ErrorResponse
+        ),
+    )
+)]
 pub async fn get_batch_quotes(
     State(state): State<Arc<AppState>>,
+    request_id: RequestId,
     Json(payload): Json<crate::models::request::BatchQuoteRequest>,
-) -> Result<Json<crate::models::response::BatchQuoteResponse>> {
-    debug!("Getting {} batch quotes", payload.quotes.len());
+) -> Result<Json<crate::models::ApiResponse<crate::models::response::BatchQuoteResponse>>> {
+    use crate::models::response::{BatchItemError, BatchQuoteItemResult, BatchQuoteResponse};
+    use futures_util::future::join_all;
 
+    // ── 1. Batch-level validation ─────────────────────────────────────────
     if payload.quotes.is_empty() {
-        return Err(ApiError::Validation("Empty batch request".to_string()));
-    }
-
-    if payload.quotes.len() > 25 {
         return Err(ApiError::Validation(
-            "Batch size cannot exceed 25 items".to_string(),
+            "Batch request must contain at least 1 item".to_string(),
         ));
     }
-
-    let mut quotes = Vec::with_capacity(payload.quotes.len());
-    for item in payload.quotes {
-        let params = QuoteParams {
-            amount: item.amount,
-            slippage_bps: item.slippage_bps,
-            quote_type: item
-                .quote_type
-                .unwrap_or(crate::models::request::QuoteType::Sell),
-            explain: None,
-        };
-
-        let base_asset = AssetPath::parse(&item.base)
-            .map_err(|e| ApiError::InvalidAsset(format!("Invalid base asset: {}", e)))?;
-        let quote_asset = AssetPath::parse(&item.quote)
-            .map_err(|e| ApiError::InvalidAsset(format!("Invalid quote asset: {}", e)))?;
-
-        let (quote, _) =
-            get_quote_inner(state.clone(), base_asset, quote_asset, params, false).await?;
-        quotes.push(quote);
+    if payload.quotes.len() > BATCH_MAX_ITEMS {
+        return Err(ApiError::Validation(format!(
+            "Batch size {} exceeds maximum of {} items",
+            payload.quotes.len(),
+            BATCH_MAX_ITEMS
+        )));
     }
 
-    let total = quotes.len();
-    Ok(Json(crate::models::response::BatchQuoteResponse {
-        quotes,
+    // ── 2. Per-item pre-validation (fail fast on obviously bad inputs) ────
+    // We validate all items before touching the DB so the caller gets a
+    // complete picture of what's wrong in a single round-trip.
+    let mut pre_errors: Vec<Option<BatchItemError>> = vec![None; payload.quotes.len()];
+    for (i, item) in payload.quotes.iter().enumerate() {
+        if let Err(msg) = item.validate() {
+            pre_errors[i] = Some(BatchItemError {
+                code: "validation_error".to_string(),
+                message: msg,
+            });
+        }
+    }
+
+    // ── 3. Shared snapshot timestamp ─────────────────────────────────────
+    // All items are computed against data fetched within this request.
+    let snapshot_timestamp = chrono::Utc::now().timestamp_millis();
+
+    // ── 4. Concurrent execution ───────────────────────────────────────────
+    // Build one future per item; items that failed pre-validation resolve
+    // immediately to their error without touching the DB.
+    let futures: Vec<_> = payload
+        .quotes
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, item)| {
+            let state = state.clone();
+            let pre_err = pre_errors[i].take();
+            async move {
+                if let Some(err) = pre_err {
+                    return BatchQuoteItemResult::err(i, err);
+                }
+
+                let params = QuoteParams {
+                    amount: item.amount.clone(),
+                    slippage_bps: item.slippage_bps,
+                    quote_type: item
+                        .quote_type
+                        .unwrap_or(crate::models::request::QuoteType::Sell),
+                    explain: None,
+                };
+
+                let base_asset = match AssetPath::parse(&item.base) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return BatchQuoteItemResult::err(
+                            i,
+                            BatchItemError {
+                                code: "invalid_asset".to_string(),
+                                message: format!("Invalid base asset: {}", e),
+                            },
+                        )
+                    }
+                };
+                let quote_asset = match AssetPath::parse(&item.quote) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return BatchQuoteItemResult::err(
+                            i,
+                            BatchItemError {
+                                code: "invalid_asset".to_string(),
+                                message: format!("Invalid quote asset: {}", e),
+                            },
+                        )
+                    }
+                };
+
+                match get_quote_inner(state, base_asset, quote_asset, params, false).await {
+                    Ok((quote, _cache_hit)) => BatchQuoteItemResult::ok(i, quote),
+                    Err(e) => {
+                        let (code, message) = batch_error_from_api_error(&e);
+                        BatchQuoteItemResult::err(i, BatchItemError { code, message })
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let results: Vec<BatchQuoteItemResult> = join_all(futures).await;
+
+    // ── 5. Aggregate counters ─────────────────────────────────────────────
+    let items_succeeded = results.iter().filter(|r| r.status == "ok").count();
+    let items_failed = results.len() - items_succeeded;
+    let total = results.len();
+
+    let response = BatchQuoteResponse {
+        results,
+        items_succeeded,
+        items_failed,
         total,
-    }))
+        snapshot_timestamp,
+    };
+
+    let envelope = crate::models::ApiResponse::new(response, request_id.to_string());
+    Ok(Json(envelope))
 }
 
-async fn get_quote_inner(
+/// Maximum number of items allowed in a single batch request.
+pub const BATCH_MAX_ITEMS: usize = 25;
+
+/// Map an [`ApiError`] to a `(code, message)` pair for per-item batch errors.
+fn batch_error_from_api_error(e: &ApiError) -> (String, String) {
+    match e {
+        ApiError::NoRouteFound => (
+            "no_route".to_string(),
+            "No trading route found for this pair".to_string(),
+        ),
+        ApiError::StaleMarketData {
+            stale_count,
+            fresh_count,
+            ..
+        } => (
+            "stale_data".to_string(),
+            format!(
+                "Market data is stale ({} stale, {} fresh)",
+                stale_count, fresh_count
+            ),
+        ),
+        ApiError::NotFound(msg) => ("not_found".to_string(), msg.clone()),
+        ApiError::InvalidAsset(msg) => ("invalid_asset".to_string(), msg.clone()),
+        ApiError::Validation(msg) => ("validation_error".to_string(), msg.clone()),
+        _ => (
+            "internal_error".to_string(),
+            "An internal error occurred".to_string(),
+        ),
+    }
+}
+
+pub(crate) async fn get_quote_inner(
     state: Arc<AppState>,
     base_asset: AssetPath,
     quote_asset: AssetPath,
     params: QuoteParams,
     explain: bool,
-) -> Result<(QuoteResponse, bool)> {
+) -> Result<(PreparedQuoteResponse, bool)> {
     let base = base_asset.to_canonical();
     let quote = quote_asset.to_canonical();
 
@@ -245,7 +560,7 @@ async fn get_quote_inner(
     let quote_cache_key_c = quote_cache_key.clone();
 
     // Use single-flight to coalesce identical concurrent requests
-    let result_arc: Arc<crate::error::Result<(QuoteResponse, bool)>> = state
+    let result_arc: Arc<crate::error::Result<(PreparedQuoteResponse, bool)>> = state
         .quote_single_flight
         .execute(&quote_cache_key, || async move {
             let state = state_c;
@@ -253,16 +568,18 @@ async fn get_quote_inner(
             let quote = quote_c;
             let quote_cache_key = quote_cache_key_c;
 
-            // Try to get from cache first (inside single-flight so we only compute once if miss)
+            // Return pre-serialized JSON on hot cache hits to avoid deserializing and reserializing.
             if let Some(cache) = &state.cache {
                 if let Ok(mut cache) = cache.try_lock() {
-                    if let Some(cached) = cache.get::<QuoteResponse>(&quote_cache_key).await {
+                    if let Some(cached_json) = cache.get_json(&quote_cache_key).await {
                         state.cache_metrics.inc_quote_hit();
                         crate::metrics::record_cache_hit("quote");
                         tracing::Span::current().record("cache_hit", true);
                         debug!("Returning cached quote for {}/{}", base, quote);
-                        // SingleFlight expects Arc<Result<(QuoteResponse, bool)>>
-                        return Arc::new(Ok((cached, true)));
+                        return Arc::new(Ok((
+                            PreparedQuoteResponse::from_cached_json(cached_json),
+                            true,
+                        )));
                     }
                 }
             }
@@ -271,99 +588,43 @@ async fn get_quote_inner(
             crate::metrics::record_cache_miss("quote");
 
             // Compute best price with freshness scoring
-            let compute_res =
-                find_best_price(&state, &base_asset, &quote_asset, base_id, quote_id, amount).await;
-
-            let (
-                price,
-                path,
-                rationale,
-                api_diagnostics,
-                freshness_outcome,
-                fresh_timestamps,
-                liquidity_snapshot,
-            ) = match compute_res {
-                Ok(res) => res,
+            let response = match compute_quote_response(
+                state.clone(),
+                base_asset,
+                quote_asset,
+                params,
+                explain,
+            )
+            .await
+            {
+                Ok(response) => response,
                 Err(e) => return Arc::new(Err(e)),
             };
 
-            // Increment stale inputs metrics
-            let stale_count = freshness_outcome.stale.len();
-            if stale_count > 0 {
-                state
-                    .cache_metrics
-                    .add_stale_inputs_excluded(stale_count as u64);
-            }
-
-            let total = amount * price;
-            let timestamp = chrono::Utc::now().timestamp_millis();
-            let ttl_seconds = u32::try_from(state.cache_policy.quote_ttl.as_secs()).ok();
-            let expires_at = i64::try_from(state.cache_policy.quote_ttl.as_millis())
-                .ok()
-                .map(|ttl_ms| timestamp + ttl_ms);
-
-            let source_timestamp = fresh_timestamps
-                .iter()
-                .min()
-                .map(|ts| ts.timestamp_millis());
-
-            let data_freshness = Some(crate::models::DataFreshness {
-                fresh_count: freshness_outcome.fresh.len(),
-                stale_count: freshness_outcome.stale.len(),
-                max_staleness_secs: freshness_outcome.max_staleness_secs,
-            });
-
-            let response = QuoteResponse {
-                base_asset: asset_path_to_info(&base_asset),
-                quote_asset: asset_path_to_info(&quote_asset),
-                amount: format!("{:.7}", amount),
-                price: format!("{:.7}", price),
-                total: format!("{:.7}", total),
-                quote_type: quote_type_str.to_string(),
-                path,
-                timestamp,
-                expires_at,
-                source_timestamp,
-                ttl_seconds,
-                rationale: Some(rationale),
-                exclusion_diagnostics: Some(api_diagnostics),
-                data_freshness,
-                price_impact: None, // Will be computed in Phase 3
+            let prepared = match PreparedQuoteResponse::from_quote(response) {
+                Ok(prepared) => prepared,
+                Err(e) => return Arc::new(Err(e)),
             };
 
-            // Cache the response
+            // Cache the serialized JSON once so future hits skip serde work.
+            // Apply jitter to the TTL to prevent synchronized expiry storms
+            // across hot pairs (cache stampede protection).
             if let Some(cache) = &state.cache {
                 if let Ok(mut cache) = cache.try_lock() {
+                    let jitter = crate::cache::JitteredTtl::default();
+                    let jittered_ttl = jitter.apply(state.cache_policy.quote_ttl);
                     let _ = cache
-                        .set(&quote_cache_key, &response, state.cache_policy.quote_ttl)
+                        .set_json(
+                            &quote_cache_key,
+                            std::str::from_utf8(prepared.json_bytes())
+                                .expect("quote JSON serialization is valid UTF-8"),
+                            jittered_ttl,
+                        )
                         .await;
                 }
             }
 
-            // [Replay] Non-blocking capture — fire-and-forget, zero latency impact
-            if let Some(hook) = &state.replay_capture {
-                use stellarroute_routing::health::scorer::HealthScoringConfig;
-                let hc = HealthScoringConfig::default();
-                let health_config = crate::replay::artifact::HealthConfigSnapshot {
-                    freshness_threshold_secs_sdex: hc.freshness_threshold_secs.sdex,
-                    freshness_threshold_secs_amm: hc.freshness_threshold_secs.amm,
-                    staleness_threshold_secs: hc.staleness_threshold_secs,
-                    min_tvl_threshold_e7: hc.min_tvl_threshold_e7,
-                };
-                hook.capture(
-                    &base,
-                    &quote,
-                    &format!("{:.7}", amount),
-                    slippage_bps,
-                    quote_type_str,
-                    liquidity_snapshot,
-                    health_config,
-                    &response,
-                    None,
-                );
-            }
-
-            Arc::new(Ok((response, false)))
+            Arc::new(Ok((prepared, false)))
         })
         .await;
 
@@ -371,6 +632,119 @@ async fn get_quote_inner(
         Ok(res) => res,
         Err(arc_res) => arc_res.as_ref().clone(),
     }
+}
+
+async fn compute_quote_response(
+    state: Arc<AppState>,
+    base_asset: AssetPath,
+    quote_asset: AssetPath,
+    params: QuoteParams,
+    _explain: bool,
+) -> Result<QuoteResponse> {
+    let base = base_asset.to_canonical();
+    let quote = quote_asset.to_canonical();
+
+    debug!(
+        "Getting data quote for {}/{} (amount: {:?}, type: {:?})",
+        base, quote, params.amount, params.quote_type
+    );
+
+    let amount: f64 = params
+        .amount
+        .as_deref()
+        .unwrap_or("1")
+        .parse()
+        .unwrap_or(1.0);
+
+    let quote_type_str = match params.quote_type {
+        crate::models::request::QuoteType::Sell => "sell",
+        crate::models::request::QuoteType::Buy => "buy",
+    };
+
+    let base_id = find_asset_id(&state, &base_asset).await?;
+    let quote_id = find_asset_id(&state, &quote_asset).await?;
+
+    let (
+        price,
+        path,
+        rationale,
+        api_diagnostics,
+        freshness_outcome,
+        fresh_timestamps,
+        liquidity_snapshot,
+        midpoint,
+        spread_bps,
+    ) = find_best_price(&state, &base_asset, &quote_asset, base_id, quote_id, amount).await?;
+
+    let stale_count = freshness_outcome.stale.len();
+    if stale_count > 0 {
+        state
+            .cache_metrics
+            .add_stale_inputs_excluded(stale_count as u64);
+    }
+
+    let total = amount * price;
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let ttl_seconds = u32::try_from(state.cache_policy.quote_ttl.as_secs()).ok();
+    let expires_at = i64::try_from(state.cache_policy.quote_ttl.as_millis())
+        .ok()
+        .map(|ttl_ms| timestamp + ttl_ms);
+
+    let source_timestamp = fresh_timestamps
+        .iter()
+        .min()
+        .map(|ts| ts.timestamp_millis());
+
+    let data_freshness = Some(crate::models::DataFreshness {
+        fresh_count: freshness_outcome.fresh.len(),
+        stale_count: freshness_outcome.stale.len(),
+        max_staleness_secs: freshness_outcome.max_staleness_secs,
+    });
+
+    let response = QuoteResponse {
+        base_asset: asset_path_to_info(&base_asset),
+        quote_asset: asset_path_to_info(&quote_asset),
+        amount: format!("{:.7}", amount),
+        price: format!("{:.7}", price),
+        total: format!("{:.7}", total),
+        quote_type: quote_type_str.to_string(),
+        degraded: state.external_dependency_health.soroban_breaker_is_open(),
+        path,
+        timestamp,
+        expires_at,
+        source_timestamp,
+        ttl_seconds,
+        rationale: Some(rationale),
+        exclusion_diagnostics: Some(api_diagnostics),
+        data_freshness,
+        midpoint: midpoint.map(|m| format!("{:.7}", m)),
+        spread_bps,
+        price_impact: None,
+    };
+
+    if let Some(hook) = &state.replay_capture {
+        use stellarroute_routing::health::scorer::HealthScoringConfig;
+        let hc = HealthScoringConfig::default();
+        let health_config = crate::replay::artifact::HealthConfigSnapshot {
+            freshness_threshold_secs_sdex: hc.freshness_threshold_secs.sdex,
+            freshness_threshold_secs_amm: hc.freshness_threshold_secs.amm,
+            staleness_threshold_secs: hc.staleness_threshold_secs,
+            min_tvl_threshold_e7: hc.min_tvl_threshold_e7,
+        };
+        hook.capture(
+            &base,
+            &quote,
+            &format!("{:.7}", amount),
+            params.slippage_bps(),
+            quote_type_str,
+            liquidity_snapshot,
+            health_config,
+            &response,
+            None,
+        );
+    }
+
+    Ok(response)
 }
 
 /// Get routing path for a trading pair
@@ -396,8 +770,9 @@ async fn get_quote_inner(
 )]
 pub async fn get_route(
     State(state): State<Arc<AppState>>,
+    request_id: RequestId,
     request: crate::middleware::validation::ValidatedQuoteRequest,
-) -> Result<Json<crate::models::RouteResponse>> {
+) -> Result<Json<crate::models::ApiResponse<crate::models::RouteResponse>>> {
     let ValidatedQuoteRequest {
         base: base_asset,
         quote: quote_asset,
@@ -435,7 +810,8 @@ pub async fn get_route(
         timestamp: chrono::Utc::now().timestamp_millis(),
     };
 
-    Ok(Json(response))
+    let envelope = crate::models::ApiResponse::new(response, request_id.to_string());
+    Ok(Json(envelope))
 }
 
 /// Find best price for a trading pair
@@ -447,6 +823,8 @@ type FindBestPriceResult = (
     FreshnessOutcome,
     Vec<chrono::DateTime<chrono::Utc>>,
     Vec<crate::replay::artifact::LiquidityCandidate>, // snapshot for replay capture
+    Option<f64>, // midpoint
+    Option<u32>, // spread_bps
 );
 
 #[tracing::instrument(
@@ -467,16 +845,33 @@ async fn find_best_price(
     quote_id: uuid::Uuid,
     amount: f64,
 ) -> Result<FindBestPriceResult> {
-    // Parallel multi-source quote computation
-    let sdex_timeout = Duration::from_millis(500);
-    let amm_timeout = Duration::from_millis(500);
+    // Initialize budget tracker for per-stage timing enforcement
+    let mut budget_tracker = BudgetTracker::new(BudgetConfig::realtime());
 
+    // Stage 1: Fetch candidates from data sources
+    let health_score = state.calculate_health_score().await;
+    let dynamic_timeout = state.timeout_controller.calculate_timeout(health_score);
+
+    let fetch_guard = budget_tracker.stage(PipelineStage::FetchCandidates);
     let sdex_task = fetch_source_candidates(state, base_id, quote_id, "sdex");
     let amm_task = fetch_source_candidates(state, base_id, quote_id, "amm");
 
     let (sdex_res, amm_res) = tokio::join!(
-        timeout(sdex_timeout, sdex_task),
-        timeout(amm_timeout, amm_task)
+        timeout(dynamic_timeout, sdex_task),
+        timeout(dynamic_timeout, amm_task)
+    );
+
+    let fetch_result = fetch_guard.complete();
+    budget_tracker.record(PipelineStage::FetchCandidates, fetch_result);
+    state
+        .timeout_controller
+        .record_latency(fetch_result.duration());
+
+    // Record metrics
+    crate::metrics::record_adaptive_timeout(
+        dynamic_timeout.as_millis() as u64,
+        state.timeout_controller.current_ema_ms(),
+        "realtime",
     );
 
     let mut candidates = Vec::new();
@@ -484,17 +879,31 @@ async fn find_best_price(
     match sdex_res {
         Ok(Ok(mut res)) => candidates.append(&mut res),
         Ok(Err(e)) => warn!("SDEX source error: {:?}", e),
-        Err(_) => warn!("SDEX source timed out"),
+        Err(_) => warn!("SDEX source timed out after {:?}", dynamic_timeout),
     }
 
     match amm_res {
         Ok(Ok(mut res)) => candidates.append(&mut res),
         Ok(Err(e)) => warn!("AMM source error: {:?}", e),
-        Err(_) => warn!("AMM source timed out"),
+        Err(_) => warn!("AMM source timed out after {:?}", dynamic_timeout),
     }
 
-    // Deterministic merge: sort by price, then venue type, then ref
-    candidates.sort_by(|a, b| {
+    // Split candidates into direct and inverse (for midpoint/spread calculation)
+    let direct_candidates: Vec<DirectVenueCandidate> = candidates
+        .iter()
+        .filter(|c| !c.is_inverse)
+        .cloned()
+        .collect();
+    
+    let inverse_candidates: Vec<DirectVenueCandidate> = candidates
+        .iter()
+        .filter(|c| c.is_inverse)
+        .cloned()
+        .collect();
+
+    // Deterministic merge for direct candidates (Req 2.1)
+    let mut sorted_direct = direct_candidates.clone();
+    sorted_direct.sort_by(|a, b| {
         a.price
             .partial_cmp(&b.price)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -502,11 +911,31 @@ async fn find_best_price(
             .then_with(|| a.venue_ref.cmp(&b.venue_ref))
     });
 
-    // Capture a single wall-clock instant for both scorer_inputs construction and freshness eval
-    let now = chrono::Utc::now();
+    // Calculate market midpoint and spread across all fresh venues (Req 5.1)
+    let best_ask = direct_candidates
+        .iter()
+        .filter(|c| c.price > 0.0)
+        .map(|c| c.price)
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    
+    let best_bid = inverse_candidates
+        .iter()
+        .filter(|c| c.price > 0.0)
+        .map(|c| 1.0 / c.price)
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Build VenueScorerInput from candidates
-    let scorer_inputs: Vec<VenueScorerInput> = candidates
+    let (midpoint, spread_bps) = match (best_ask, best_bid) {
+        (Some(ask), Some(bid)) if ask > 0.0 && bid > 0.0 => {
+            let mid = (ask + bid) / 2.0;
+            let spread = (ask - bid) / mid;
+            (Some(mid), Some((spread * 10000.0).max(0.0) as u32))
+        }
+        _ => (None, None),
+    };
+
+    // Stage 2: Freshness evaluation (only for direct candidates)
+    let now = chrono::Utc::now();
+    let scorer_inputs: Vec<VenueScorerInput> = direct_candidates
         .iter()
         .map(|c| {
             if c.venue_type == "amm" {
@@ -537,13 +966,11 @@ async fn find_best_price(
         })
         .collect();
 
-    // Health scoring / exclusion policy (defaults match routing `HealthScoringConfig`)
+    let freshness_guard = budget_tracker.stage(PipelineStage::FreshnessEval);
     let health_config = HealthScoringConfig::default();
     let freshness_outcome =
         FreshnessGuard::evaluate(&scorer_inputs, &health_config.freshness_threshold_secs, now);
-
-    tracing::Span::current().record("stale_count", freshness_outcome.stale.len());
-    tracing::Span::current().record("fresh_count", freshness_outcome.fresh.len());
+    budget_tracker.record(PipelineStage::FreshnessEval, freshness_guard.complete());
 
     if freshness_outcome.fresh.is_empty() {
         state.cache_metrics.inc_stale_rejection();
@@ -558,7 +985,7 @@ async fn find_best_price(
     let fresh_candidates: Vec<DirectVenueCandidate> = freshness_outcome
         .fresh
         .iter()
-        .filter_map(|&idx| candidates.get(idx).cloned())
+        .filter_map(|&idx| direct_candidates.get(idx).cloned())
         .collect();
     let fresh_scorer_inputs: Vec<&VenueScorerInput> = freshness_outcome
         .fresh
@@ -568,7 +995,7 @@ async fn find_best_price(
     let mut stale_exclusion_entries: Vec<ApiExcludedVenueInfo> = freshness_outcome
         .stale
         .iter()
-        .filter_map(|&idx| candidates.get(idx))
+        .filter_map(|&idx| direct_candidates.get(idx))
         .map(|candidate| ApiExcludedVenueInfo {
             venue_ref: candidate.venue_ref.clone(),
             reason: ApiExclusionReason::StaleData,
@@ -603,17 +1030,34 @@ async fn find_best_price(
             last_updated_at: input.last_updated_at,
         })
         .collect();
+    // Stage 3: Health scoring
+    let health_scoring_guard = budget_tracker.stage(PipelineStage::HealthScoring);
     let scored = scorer.score_venues(&fresh_inputs_owned);
+    budget_tracker.record(
+        PipelineStage::HealthScoring,
+        health_scoring_guard.complete(),
+    );
+
+    let mut overrides = state.kill_switch.get_override_registry().await;
+    // Merge static config overrides into dynamic ones
+    for entry in health_config.overrides.clone() {
+        overrides
+            .venue_entries
+            .insert(entry.venue_ref, entry.directive);
+    }
 
     let policy = ExclusionPolicy {
         thresholds: health_config.thresholds.clone(),
-        overrides: OverrideRegistry::from_entries(health_config.overrides.clone()),
+        overrides,
         circuit_breaker: Some(state.circuit_breaker.clone()),
     };
 
+    // Stage 4: Policy filter
+    let policy_filter_guard = budget_tracker.stage(PipelineStage::PolicyFilter);
     // Apply filter (pass empty edges — we just need diagnostics for this single-hop path)
     let filter = GraphFilter::new(&policy);
     let (_, routing_diagnostics) = filter.filter_edges(&[], &scored);
+    budget_tracker.record(PipelineStage::PolicyFilter, policy_filter_guard.complete());
 
     tracing::info!(
         stage = "policy_filter",
@@ -642,6 +1086,9 @@ async fn find_best_price(
                 stellarroute_routing::health::policy::ExclusionReason::CircuitBreakerOpen => {
                     ApiExclusionReason::CircuitBreakerOpen
                 }
+                stellarroute_routing::health::policy::ExclusionReason::LiquidityAnomaly {
+                    ..
+                } => ApiExclusionReason::LiquidityAnomaly,
             },
         })
         .collect();
@@ -651,8 +1098,24 @@ async fn find_best_price(
         excluded_venues: stale_exclusion_entries,
     };
 
+    // Stage 5: Venue selection
+    let venue_selection_guard = budget_tracker.stage(PipelineStage::VenueSelection);
     // Pass only fresh candidates to price evaluation (Req 2.2, 6.1)
     let (selected, rationale) = evaluate_single_hop_direct_venues(fresh_candidates, amount)?;
+    budget_tracker.record(
+        PipelineStage::VenueSelection,
+        venue_selection_guard.complete(),
+    );
+
+    // Finalize budget tracking
+    let budget_summary = budget_tracker.finish();
+    if budget_summary.has_overruns() {
+        warn!(
+            overbudget_stages = ?budget_summary.overbudget_stages,
+            total_duration_ms = budget_summary.total_duration.as_millis() as u64,
+            "Quote pipeline budget overruns detected"
+        );
+    }
 
     // Collect last_updated_at timestamps for fresh scorer inputs (for source_timestamp, Req 3.1)
     let fresh_timestamps: Vec<chrono::DateTime<chrono::Utc>> = freshness_outcome
@@ -669,6 +1132,7 @@ async fn find_best_price(
             venue_ref: c.venue_ref.clone(),
             price: format!("{:.7}", c.price),
             available_amount: format!("{:.7}", c.available_amount),
+            fee_bps: Some(c.fee_bps),
         })
         .collect();
 
@@ -677,6 +1141,8 @@ async fn find_best_price(
         to_asset: asset_path_to_info(quote),
         price: format!("{:.7}", selected.price),
         source: selected.path_source(),
+        liquidity_depth: Some(format!("{:.7}", selected.available_amount)),
+        fee_bps: Some(selected.fee_bps),
     }];
 
     Ok((
@@ -687,6 +1153,8 @@ async fn find_best_price(
         freshness_outcome,
         fresh_timestamps,
         liquidity_snapshot,
+        midpoint,
+        spread_bps,
     ))
 }
 
@@ -698,6 +1166,8 @@ struct DirectVenueCandidate {
     available_amount: f64,
     price_e7: i64,
     available_amount_e7: i64,
+    fee_bps: u32,
+    is_inverse: bool,
 }
 
 impl DirectVenueCandidate {
@@ -803,17 +1273,20 @@ async fn fetch_source_candidates(
 ) -> Result<Vec<DirectVenueCandidate>> {
     let rows = sqlx::query(
         r#"
-                select
-                    venue_type,
-                    venue_ref,
-                    price::text as price,
-                    available_amount::text as available_amount,
-                    price_e7,
-                    available_amount_e7
-                from normalized_liquidity
-        where selling_asset_id = $1
-          and buying_asset_id = $2
-          and venue_type = $3
+        select
+            nl.venue_type,
+            nl.venue_ref,
+            nl.price::text as price,
+            nl.available_amount::text as available_amount,
+            nl.price_e7,
+            nl.available_amount_e7,
+            nl.selling_asset_id,
+            coalesce(amm.fee_bps, 0)::integer as fee_bps
+        from normalized_liquidity nl
+        left join amm_pool_reserves amm on nl.venue_type = 'amm' and nl.venue_ref = amm.pool_address
+        where ((selling_asset_id = $1 and buying_asset_id = $2)
+           or (selling_asset_id = $2 and buying_asset_id = $1))
+          and nl.venue_type = $3
         "#,
     )
     .bind(base_id)
@@ -834,6 +1307,9 @@ async fn fetch_source_candidates(
                 .unwrap_or(0.0);
             let price_e7: i64 = row.get("price_e7");
             let available_amount_e7: i64 = row.get("available_amount_e7");
+            let fee_bps: i32 = row.get("fee_bps");
+            let selling_id: uuid::Uuid = row.get("selling_asset_id");
+            
             DirectVenueCandidate {
                 venue_type,
                 venue_ref,
@@ -841,6 +1317,8 @@ async fn fetch_source_candidates(
                 available_amount,
                 price_e7,
                 available_amount_e7,
+                fee_bps: fee_bps as u32,
+                is_inverse: selling_id == quote_id,
             }
         })
         .collect())
@@ -920,6 +1398,76 @@ fn asset_path_to_info(asset: &AssetPath) -> AssetInfo {
     }
 }
 
+/// Build an [`AuditSelected`] from a successful [`QuoteResponse`].
+fn build_audit_selected(quote: &QuoteResponse) -> AuditSelected {
+    let (venue_type, venue_ref) = quote
+        .rationale
+        .as_ref()
+        .map(|r| {
+            let parts: Vec<&str> = r.selected_source.splitn(2, ':').collect();
+            match parts.as_slice() {
+                [vt, vr] => (vt.to_string(), vr.to_string()),
+                [vt] => (vt.to_string(), String::new()),
+                _ => ("unknown".to_string(), String::new()),
+            }
+        })
+        .unwrap_or_else(|| ("unknown".to_string(), String::new()));
+
+    let path = quote
+        .path
+        .iter()
+        .map(|step| AuditPathStep {
+            from: step.from_asset.to_canonical(),
+            to: step.to_asset.to_canonical(),
+            price: step.price.clone(),
+            source: step.source.clone(),
+        })
+        .collect();
+
+    let strategy = quote
+        .rationale
+        .as_ref()
+        .map(|r| r.strategy.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    AuditSelected {
+        venue_type,
+        venue_ref,
+        price: quote.price.clone(),
+        path,
+        strategy,
+    }
+}
+
+/// Build the list of [`AuditExclusion`] entries from a [`QuoteResponse`].
+fn build_audit_exclusions(quote: &QuoteResponse) -> Vec<AuditExclusion> {
+    quote
+        .exclusion_diagnostics
+        .as_ref()
+        .map(|d| {
+            d.excluded_venues
+                .iter()
+                .map(|v| AuditExclusion {
+                    venue_ref: v.venue_ref.clone(),
+                    reason: match &v.reason {
+                        crate::models::ExclusionReason::PolicyThreshold { threshold } => {
+                            format!("policy_threshold:{:.4}", threshold)
+                        }
+                        crate::models::ExclusionReason::Override => "override".to_string(),
+                        crate::models::ExclusionReason::StaleData => "stale_data".to_string(),
+                        crate::models::ExclusionReason::CircuitBreakerOpen => {
+                            "circuit_breaker_open".to_string()
+                        }
+                        crate::models::ExclusionReason::LiquidityAnomaly => {
+                            "liquidity_anomaly".to_string()
+                        }
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -930,6 +1478,7 @@ mod tests {
         venue_ref: &str,
         price: f64,
         available_amount: f64,
+        fee_bps: u32,
     ) -> DirectVenueCandidate {
         DirectVenueCandidate {
             venue_type: venue_type.to_string(),
@@ -938,15 +1487,17 @@ mod tests {
             available_amount,
             price_e7: (price * 1e7) as i64,
             available_amount_e7: (available_amount * 1e7) as i64,
+            fee_bps,
+            is_inverse: false,
         }
     }
 
     #[test]
     fn selects_best_executable_direct_venue() {
         let candidates = vec![
-            candidate("amm", "pool1", 1.02, 100.0),
-            candidate("sdex", "offer2", 1.01, 25.0),
-            candidate("sdex", "offer1", 1.00, 75.0),
+            candidate("amm", "pool1", 1.02, 100.0, 30),
+            candidate("sdex", "offer2", 1.01, 25.0, 0),
+            candidate("sdex", "offer1", 1.00, 75.0, 0),
         ];
 
         let (selected, rationale) =
