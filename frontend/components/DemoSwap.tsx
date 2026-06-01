@@ -26,6 +26,7 @@ import {
   maxDecimalsForSellAsset,
   parseSellAmount,
 } from "@/lib/amount-input";
+import { getTraderErrorCopy } from "@/lib/api/trader-error-copy";
 
 import { QUOTE_AUTO_REFRESH_INTERVAL_MS } from "@/lib/quote-stale";
 
@@ -177,6 +178,7 @@ export function DemoSwap() {
 
   const receivePreview =
     quote && parseResult.status === "ok" ? quote.total : "—";
+  const quoteErrorCopy = quoteError ? getTraderErrorCopy(quoteError) : null;
 
   return (
     <Card className="p-6 max-w-lg mx-auto shadow-lg mt-8 border-primary/20 bg-background/50 backdrop-blur-sm">
@@ -284,7 +286,7 @@ export function DemoSwap() {
             </div>
             {quoteError && numericForQuote !== undefined && (
               <p className="text-xs text-destructive mt-1">
-                Quote failed: {quoteError.message}
+                {quoteErrorCopy?.headline}. {quoteErrorCopy?.recoveryAction}
               </p>
             )}
           </div>
