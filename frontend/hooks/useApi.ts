@@ -11,6 +11,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { toast } from 'sonner';
+
 import {
   StellarRouteApiError,
   stellarRouteClient,
@@ -19,9 +21,11 @@ import { QUOTE_AMOUNT_DEBOUNCE_MS } from '@/lib/quote-stale';
 import type {
   HealthStatus,
   Orderbook,
+  PriceHistoryResponse,
   PairsResponse,
   PriceQuote,
   QuoteType,
+  RoutesResponse,
   TradingPair,
 } from '@/types';
 
@@ -39,11 +43,20 @@ export interface UseApiState<T> {
 // Internal: generic fetch hook
 // ---------------------------------------------------------------------------
 
+interface UseFetchOptions {
+  refreshIntervalMs?: number;
+  skip?: boolean;
+  showToastOnError?: boolean;
+}
+
 function useFetch<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   deps: unknown[],
-  refreshIntervalMs?: number,
-  skip?: boolean,
+  {
+    refreshIntervalMs,
+    skip = false,
+    showToastOnError = false,
+  }: UseFetchOptions = {},
 ): UseApiState<T> & { refresh: () => void } {
   const [state, setState] = useState<UseApiState<T>>({
     data: undefined,
@@ -80,17 +93,24 @@ function useFetch<T>(
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
+          const finalError = err instanceof Error ? err : new Error(String(err));
           setState({
             data: undefined,
             loading: false,
-            error: err instanceof Error ? err : new Error(String(err)),
+            error: finalError,
           });
+
+          if (showToastOnError) {
+            toast.error(finalError instanceof StellarRouteApiError ? "API Error" : "Fetch Error", {
+              description: finalError.message,
+            });
+          }
         }
       });
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, skip, ...deps]);
+  }, [tick, skip, showToastOnError, ...deps]);
 
   // Auto-refresh
   useEffect(() => {
@@ -101,6 +121,7 @@ function useFetch<T>(
 
   return { ...state, refresh };
 }
+
 
 // ---------------------------------------------------------------------------
 // Internal: simple debounce hook
@@ -128,6 +149,7 @@ export function usePairs(): UseApiState<TradingPair[]> & {
         .getPairs({ signal })
         .then((res: PairsResponse) => res.pairs),
     [],
+    { showToastOnError: true },
   );
   return result;
 }
@@ -144,7 +166,44 @@ export function useOrderbook(
   return useFetch(
     (signal) => stellarRouteClient.getOrderbook(base, quote, { signal }),
     [base, quote],
+    { refreshIntervalMs },
+  );
+}
+
+export function usePriceHistory(
+  base: string,
+  quote: string,
+  refreshIntervalMs = 60_000,
+  skip = false,
+): UseApiState<PriceHistoryResponse> & { refresh: () => void } {
+  return useFetch(
+    (signal) => stellarRouteClient.getPriceHistory(base, quote, { signal }),
+    [base, quote],
     refreshIntervalMs,
+    skip || !base || !quote,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// useRoutes — fetch ranked route candidates
+// ---------------------------------------------------------------------------
+
+export function useRoutes(
+  base: string,
+  quote: string,
+  amount?: number,
+  limit = 5,
+  maxHops = 3,
+): UseApiState<RoutesResponse> & { refresh: () => void } {
+  const skip = !base || !quote;
+  return useFetch(
+    (signal) =>
+      stellarRouteClient.getRoutes(base, quote, amount, limit, maxHops, {
+        signal,
+      }),
+    [base, quote, amount, limit, maxHops],
+    undefined,
+    skip,
   );
 }
 
@@ -177,8 +236,7 @@ export function useQuote(
         signal,
       }),
     [base, quote, debouncedAmount, type],
-    refreshIntervalMs,
-    skip,
+    { refreshIntervalMs, skip },
   );
 }
 
@@ -196,8 +254,7 @@ export function useBatchQuote(
   return useFetch(
     (signal) => stellarRouteClient.getQuotesBatch(requests, { signal }),
     [JSON.stringify(requests)],
-    refreshIntervalMs,
-    skip || requests.length === 0,
+    { refreshIntervalMs, skip: skip || requests.length === 0 },
   );
 }
 
@@ -211,6 +268,6 @@ export function useHealth(
   return useFetch(
     (signal) => stellarRouteClient.getHealth({ signal }),
     [],
-    refreshIntervalMs,
+    { refreshIntervalMs },
   );
 }

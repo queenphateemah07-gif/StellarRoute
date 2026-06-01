@@ -316,6 +316,7 @@ fn batch_item_result_ok_shape() {
         price: "1.0000000".to_string(),
         total: "1.0000000".to_string(),
         quote_type: "sell".to_string(),
+        degraded: false,
         path: vec![],
         timestamp: 0,
         expires_at: None,
@@ -325,6 +326,8 @@ fn batch_item_result_ok_shape() {
         price_impact: None,
         exclusion_diagnostics: None,
         data_freshness: None,
+        midpoint: None,
+        spread_bps: None,
     };
 
     let result = BatchQuoteItemResult::ok(0, quote);
@@ -376,6 +379,7 @@ fn batch_response_counters_are_correct() {
         price: "1.0000000".to_string(),
         total: "1.0000000".to_string(),
         quote_type: "sell".to_string(),
+        degraded: false,
         path: vec![],
         timestamp: 0,
         expires_at: None,
@@ -385,6 +389,8 @@ fn batch_response_counters_are_correct() {
         price_impact: None,
         exclusion_diagnostics: None,
         data_freshness: None,
+        midpoint: None,
+        spread_bps: None,
     };
 
     let results = vec![

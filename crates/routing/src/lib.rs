@@ -5,10 +5,12 @@
 
 pub mod adaptive_routing;
 pub mod adaptive_timeout;
+pub mod amm_fallback;
 pub mod canary;
 pub mod compaction;
 pub mod consensus;
 pub mod error;
+pub mod execution_quality;
 pub mod fixtures;
 pub mod health;
 pub mod impact;
@@ -16,15 +18,22 @@ pub mod normalization;
 pub mod optimizer;
 pub mod pathfinder;
 pub mod policy;
+pub mod regression;
 pub mod risk;
+pub mod scorer;
 pub mod simulator;
+pub mod snapshot;
 
 pub use adaptive_routing::{AdaptiveError, AdaptivePolicy, AdaptiveRouter, QualityMetrics};
 pub use adaptive_timeout::{TimeoutConfig, TimeoutController};
+pub use amm_fallback::{AmmFallbackConfig, AmmFallbackTier, FallbackResult, TieredAmmFallback};
 pub use canary::{CanaryConfig, CanaryEvaluation, CanaryEvaluator};
 pub use compaction::{CompactedEdge, CompactedGraph};
 pub use consensus::{
     ConsensusDiagnostics, ConsensusEngine, ConsensusError, ConsensusPolicy, RouteCandidate,
+};
+pub use execution_quality::{
+    ExecutionQualityTracker, QualityObservation, QualityTrackerConfig, SourceState, WeightBounds,
 };
 pub use impact::{AmmQuoteCalculator, OrderbookImpactCalculator};
 pub use optimizer::{
@@ -32,7 +41,19 @@ pub use optimizer::{
 };
 pub use pathfinder::{LiquidityEdge, Pathfinder, PathfinderConfig, SwapPath};
 pub use policy::RoutingPolicy;
+pub use regression::{
+    BaselineStore, BenchmarkFixture, RegressionReport, RegressionRunner, RegressionRunnerConfig,
+    RouteRegressionEntry,
+};
 pub use risk::{AssetRiskLimit, ExclusionReason, RiskLimitConfig, RiskValidator, RouteExclusion};
+pub use scorer::{
+    BenchmarkHarness, BenchmarkReport, DefaultScorer, FeeMinimizingScorer, OutputMaximizingScorer,
+    RouteScorer, ScorerInput, ScorerOutput, ScorerRegistry, ScorerResult,
+};
+pub use snapshot::{
+    SnapshotId, SnapshotIsolationError, SnapshotIsolationMetrics, SnapshotIsolationValidator,
+    SnapshotValidatorConfig, ValidatedHop,
+};
 
 // ─── Asset Canonicalization ──────────────────────────────────────────
 

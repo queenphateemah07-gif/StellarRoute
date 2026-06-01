@@ -139,7 +139,9 @@ export function useSessionRecovery() {
   // Update checkpoint on regular interval
   useEffect(() => {
     const interval = setInterval(() => {
-      updateCheckpoint(false);
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        updateCheckpoint(false);
+      }
     }, 5000);
 
     return () => clearInterval(interval);

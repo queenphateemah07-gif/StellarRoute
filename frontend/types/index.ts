@@ -41,6 +41,23 @@ export interface Orderbook {
   timestamp: number;
 }
 
+export interface PriceHistoryPoint {
+  /** Unix timestamp in milliseconds */
+  timestamp: number;
+  /** Mid-market price as a decimal string */
+  price: string;
+}
+
+export interface PriceHistoryResponse {
+  base_asset: Asset;
+  quote_asset: Asset;
+  window: "24h";
+  source: string;
+  /** Unix timestamp in milliseconds */
+  generated_at: number;
+  points: PriceHistoryPoint[];
+}
+
 export type QuoteType = 'sell' | 'buy';
 
 export interface PathStep {
@@ -49,6 +66,10 @@ export interface PathStep {
   price: string;
   /** "sdex" or "amm:<pool_address>" */
   source: string;
+  /** Total liquidity depth available at this hop's price */
+  liquidity_depth?: string;
+  /** Fee in basis points for this hop (e.g., 30 for 0.3%) */
+  fee_bps?: number;
 }
 
 export interface PriceQuote {
@@ -57,7 +78,15 @@ export interface PriceQuote {
   amount: string;
   price: string;
   total: string;
+  /** "sell" or "buy" */
   quote_type: QuoteType;
+  /** Whether the quote is serving degraded market data */
+  degraded?: boolean;
+  /** Market midpoint price */
+  midpoint?: string;
+  /** Market spread in basis points */
+  spread_bps?: number;
+  /** Route breakdown */
   path: PathStep[];
   priceImpact?: string;
   /** Unix timestamp (seconds) */
@@ -70,6 +99,8 @@ export interface PriceQuote {
   ttl_seconds?: number;
   /** Estimated price impact percentage */
   price_impact?: string;
+  /** Optional alternative routes provided by the aggregator */
+  alternativeRoutes?: { id: string; venue: string; expectedAmount: string }[];
 }
 
 export interface HealthStatus {
@@ -98,6 +129,31 @@ export interface ApiError {
   error: ApiErrorCode;
   message: string;
   details?: unknown;
+}
+
+export interface RouteHop {
+  from_asset: Asset;
+  to_asset: Asset;
+  price: string;
+  amount_out_of_hop?: string;
+  fee_bps?: number;
+  source: string;
+}
+
+export interface RouteCandidate {
+  score: number;
+  impact_bps: number;
+  estimated_output: string;
+  policy_used?: string;
+  path: RouteHop[];
+}
+
+export interface RoutesResponse {
+  base_asset: Asset;
+  quote_asset: Asset;
+  amount: string;
+  timestamp: number;
+  routes: RouteCandidate[];
 }
 
 export * from './route';
