@@ -7,6 +7,7 @@ use crate::db::Database;
 use crate::error::Result;
 use crate::models::{PoolReserve, PoolState};
 use crate::soroban::{SorobanRpc, SorobanRpcClient};
+use crate::telemetry::TraceContext;
 use chrono::Utc;
 use serde_json;
 use sqlx::Row;
@@ -59,6 +60,12 @@ impl AmmAggregator {
     pub async fn start_aggregation(&self) -> Result<()> {
         info!("Starting AMM pool aggregation loop");
 
+        // Run one immediate aggregation at startup to bootstrap configured pools,
+        // then continue on the configured interval.
+        if let Err(e) = self.aggregate_once().await {
+            error!("Initial AMM aggregation failed: {}", e);
+        }
+
         let mut interval =
             tokio::time::interval(Duration::from_secs(self.config.poll_interval_secs));
 
@@ -73,6 +80,7 @@ impl AmmAggregator {
     }
 
     /// Perform a single aggregation cycle
+    #[tracing::instrument(skip(self))]
     pub async fn aggregate_once(&self) -> Result<()> {
         debug!("Starting AMM pool aggregation cycle");
 
@@ -86,19 +94,38 @@ impl AmmAggregator {
                 start_ledger, current_ledger
             );
         } else {
-            // Discover new pools since last check
-            let new_pools = self
+            // Discover new pools since last check via contract events. If none are
+            // discovered, fall back to the operator-managed registry or env var list.
+            let mut new_pools = self
                 .discover_new_pools(start_ledger, current_ledger)
                 .await?;
+
+            if new_pools.is_empty() {
+                let registry = self.get_registry_pools().await?;
+                if !registry.is_empty() {
+                    info!("Using {} pools from registry fallback", registry.len());
+                    new_pools = registry;
+                }
+            }
+
             if !new_pools.is_empty() {
-                info!("Discovered {} new pools", new_pools.len());
+                info!("Processing {} newly discovered/configured pools", new_pools.len());
                 self.process_pool_batch(&new_pools).await?;
             }
         }
 
-        // Always process existing pools to update reserves
-        let existing_pools = self.get_tracked_pools().await?;
-        debug!("Processing {} existing pools", existing_pools.len());
+        // Always process existing pools to update reserves. Include any
+        // operator-registered/configured pools that may not yet have reserves
+        // written to `amm_pool_reserves` so they are actively monitored.
+        let mut existing_pools = self.get_tracked_pools().await?;
+        let configured = self.get_registry_pools().await?;
+        for p in configured {
+            if !existing_pools.contains(&p) {
+                existing_pools.push(p);
+            }
+        }
+
+        debug!("Processing {} existing/configured pools", existing_pools.len());
         for batch in existing_pools.chunks(self.config.batch_size) {
             if let Err(e) = self.process_pool_batch(batch).await {
                 warn!("Failed to process pool batch: {}", e);
@@ -200,6 +227,31 @@ impl AmmAggregator {
         Ok(rows.into_iter().map(|r| r.get("pool_address")).collect())
     }
 
+    /// Get operator-managed or env-configured pools to use as bootstrap fallback.
+    async fn get_registry_pools(&self) -> Result<Vec<String>> {
+        // First, query the `amm_pools` registry table for active pools.
+        let rows = sqlx::query("SELECT pool_address FROM amm_pools WHERE active = true")
+            .fetch_all(self.db.pool())
+            .await?;
+
+        let mut pools: Vec<String> = rows.into_iter().map(|r| r.get("pool_address")).collect();
+
+        // Then append any pools from the AMM_POOLS env var (comma-separated)
+        if let Ok(env) = std::env::var("AMM_POOLS") {
+            for p in env.split(',') {
+                let p = p.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                if !pools.contains(&p.to_string()) {
+                    pools.push(p.to_string());
+                }
+            }
+        }
+
+        Ok(pools)
+    }
+
     /// Process a batch of pools
     async fn process_pool_batch(&self, pool_addresses: &[String]) -> Result<()> {
         for address in pool_addresses {
@@ -211,6 +263,7 @@ impl AmmAggregator {
     }
 
     /// Process a single pool
+    #[tracing::instrument(skip(self), fields(pool_address = %pool_address))]
     async fn process_pool(&self, pool_address: &str) -> Result<()> {
         // Get pool state from Soroban RPC
         let state = self.get_pool_state(pool_address).await?;
@@ -297,9 +350,11 @@ impl AmmAggregator {
     }
 
     /// Update pool reserve in database
+    #[tracing::instrument(skip(self, reserve), fields(pool_address = %reserve.pool_address))]
     async fn update_pool_reserve(&self, reserve: &PoolReserve) -> Result<()> {
         let pool = self.db.pool();
-        sqlx::query("SELECT upsert_amm_pool_reserve($1, $2, $3, $4, $5, $6, $7)")
+        let trace_context = TraceContext::current();
+        sqlx::query("SELECT upsert_amm_pool_reserve($1, $2, $3, $4, $5, $6, $7, $8, $9)")
             .bind(&reserve.pool_address)
             .bind(reserve.selling_asset_id)
             .bind(reserve.buying_asset_id)
@@ -307,6 +362,8 @@ impl AmmAggregator {
             .bind(reserve.reserve_buying.to_string())
             .bind(reserve.fee_bps)
             .bind(reserve.last_updated_ledger)
+            .bind(trace_context.trace_id)
+            .bind(trace_context.span_id)
             .execute(pool)
             .await?;
 

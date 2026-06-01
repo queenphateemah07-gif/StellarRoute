@@ -56,10 +56,10 @@ Add the following to your `prometheus.yml`:
 
 ```yaml
 scrape_configs:
-  - job_name: 'stellarroute'
+  - job_name: "stellarroute"
     static_configs:
-      - targets: ['your-stellarroute-host:3000']
-    metrics_path: '/metrics'
+      - targets: ["your-stellarroute-host:3000"]
+    metrics_path: "/metrics"
 ```
 
 For SLO alerting rules, include `monitoring/prometheus/slo-alerts.yml`:

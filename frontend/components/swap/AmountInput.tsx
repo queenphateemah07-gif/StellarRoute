@@ -5,18 +5,23 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { normalizeDecimalString } from '@/lib/amount-input';
 import { useState, useCallback, useEffect, useId } from 'react';
+import { AmountPresets } from './AmountPresets';
 
 interface AmountInputProps {
   value: string;
   onChange?: (value: string) => void;
   onMax?: () => void;
+  onPresetSelect?: (percentage: number) => void;
   placeholder?: string;
   disabled?: boolean;
   readOnly?: boolean;
   className?: string;
   label?: string;
   balance?: string;
+  balanceLoading?: boolean;
+  balanceError?: boolean;
   showMax?: boolean;
+  showPresets?: boolean;
   decimals?: number; 
 }
 
@@ -24,13 +29,17 @@ export function AmountInput({
   value,
   onChange,
   onMax,
+  onPresetSelect,
   placeholder = '0.00',
   disabled = false,
   readOnly = false,
   className,
   label,
   balance,
+  balanceLoading = false,
+  balanceError = false,
   showMax = true,
+  showPresets = false,
   decimals = 7,
 }: AmountInputProps) {
   const [internalValue, setInternalValue] = useState(value);
@@ -75,9 +84,16 @@ export function AmountInput({
             {label}
           </label>
         )}
-        {balance && (
+        {(balance || balanceLoading || balanceError) && (
           <span className="text-xs text-muted-foreground">
-            Balance: <span className="font-medium text-foreground/80">{balance}</span>
+            Balance:{' '}
+            <span className="font-medium text-foreground/80">
+              {balanceLoading
+                ? 'Loading...'
+                : balanceError
+                  ? 'Unavailable'
+                  : balance}
+            </span>
           </span>
         )}
       </div>
@@ -118,6 +134,15 @@ export function AmountInput({
         </p>
       )}
 
+      {showPresets && onPresetSelect && (
+        <AmountPresets
+          balance={balance || null}
+          decimals={decimals}
+          onSelect={onPresetSelect}
+          disabled={disabled || readOnly}
+          className="mt-2"
+        />
+      )}
     </div>
   );
 }

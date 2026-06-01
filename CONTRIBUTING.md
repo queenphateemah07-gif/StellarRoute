@@ -77,6 +77,9 @@ DATABASE_URL=postgresql://stellarroute:stellarroute_dev@localhost:5432/stellarro
 The API will be available at `http://localhost:3000`. Visit `http://localhost:3000/swagger-ui` for interactive API docs.
 
 For a more detailed environment setup, see [docs/development/SETUP.md](docs/development/SETUP.md).
+For indexer-specific runbook and troubleshooting steps, see [docs/development/indexer-guide.md](docs/development/indexer-guide.md).
+
+For frontend-specific setup and workflows, see [docs/development/frontend-guide.md](docs/development/frontend-guide.md).
 
 ---
 
@@ -163,6 +166,8 @@ Every code contribution **must** include appropriate tests.
 
 ### Running Tests
 
+For the full matrix of Rust, contract, integration, benchmark, and frontend Vitest guidance, see [docs/development/testing-guide.md](docs/development/testing-guide.md).
+
 ```bash
 # All unit tests (no external deps needed)
 cargo test
@@ -208,6 +213,11 @@ Integration tests that require a live database should be marked with `#[ignore =
 - [ ] No unnecessary complexity introduced
 - [ ] Follows project conventions (naming, module structure)
 - [ ] CI is green
+
+For new or significantly changed swap UI components, also complete the
+[Swap UI component review checklist](frontend/STORYBOOK.md#swap-ui-component-review-checklist).
+It covers accessibility, loading and error states, mobile behavior,
+internationalization readiness, and manual pair selection regressions.
 
 ### After Feedback
 

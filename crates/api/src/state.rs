@@ -6,6 +6,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::cache::{CacheManager, SingleFlight};
+use crate::dependency_health::ExternalDependencyHealth;
 
 use crate::graph::GraphManager;
 use crate::models::{PreparedQuoteResponse, RoutesResponse};
@@ -16,9 +17,10 @@ use stellarroute_routing::canary::{CanaryConfig, CanaryEvaluation};
 use stellarroute_routing::health::circuit_breaker::CircuitBreakerRegistry;
 
 use crate::audit::AuditWriter;
+use crate::exactlyonce::DedupeLedger;
 use crate::indexer_lag::IndexerLagMonitor;
-use crate::liquidity_alerts::LiquidityThinnessAlerts;
 use crate::worker::{JobQueue, RouteWorkerPool, WorkerPoolConfig};
+use crate::cache::{PrewarmConfig, PrewarmJob};
 
 /// Primary database pool for write operations plus an optional replica pool
 /// for read-heavy endpoints.
@@ -41,6 +43,11 @@ impl DatabasePools {
 
     pub fn write_pool(&self) -> &PgPool {
         &self.primary
+    }
+
+    /// Returns the replica pool if one is configured, otherwise `None`.
+    pub fn replica_pool(&self) -> Option<&PgPool> {
+        self.replica.as_ref()
     }
 }
 
@@ -155,8 +162,10 @@ pub struct AppState {
     pub audit_writer: Arc<AuditWriter>,
     /// Indexer lag monitor for sync drift detection
     pub indexer_lag: Arc<IndexerLagMonitor>,
-    /// Webhook notifier for configured pair depth thresholds
-    pub liquidity_thinness_alerts: Arc<LiquidityThinnessAlerts>,
+    /// Idempotency ledger for POST /api/v1/quote deduplication
+    pub idempotency_ledger: Arc<DedupeLedger>,
+    /// External dependency probes and dedicated circuit breakers.
+    pub external_dependency_health: Arc<ExternalDependencyHealth>,
 }
 
 impl AppState {
@@ -173,10 +182,16 @@ impl AppState {
         let kill_switch = Arc::new(crate::kill_switch::KillSwitchManager::new(None));
         let audit_writer = Arc::new(AuditWriter::from_env(db.write_pool().clone()));
         let indexer_lag = Arc::new(IndexerLagMonitor::from_env(db.write_pool().clone()));
-        let liquidity_thinness_alerts = Arc::new(LiquidityThinnessAlerts::from_env());
         indexer_lag
             .clone()
             .start_polling(std::time::Duration::from_secs(30));
+
+        let idempotency_ledger = {
+            let ledger = Arc::new(DedupeLedger::new(60));
+            ledger.clone().spawn_cleanup_task();
+            ledger
+        };
+        let external_dependency_health = Arc::new(ExternalDependencyHealth::from_env());
 
         Self {
             db,
@@ -202,7 +217,8 @@ impl AppState {
             timeout_controller: Arc::new(TimeoutController::new(Default::default())),
             audit_writer,
             indexer_lag,
-            liquidity_thinness_alerts,
+            idempotency_ledger,
+            external_dependency_health,
         }
     }
 
@@ -226,7 +242,6 @@ impl AppState {
         )));
         let audit_writer = Arc::new(AuditWriter::from_env(db.write_pool().clone()));
         let indexer_lag = Arc::new(IndexerLagMonitor::from_env(db.write_pool().clone()));
-        let liquidity_thinness_alerts = Arc::new(LiquidityThinnessAlerts::from_env());
         indexer_lag
             .clone()
             .start_polling(std::time::Duration::from_secs(30));
@@ -238,7 +253,15 @@ impl AppState {
             ks.start_sync();
         });
 
-        Self {
+        let idempotency_ledger = {
+            let ledger = Arc::new(DedupeLedger::new(60));
+            ledger.clone().spawn_cleanup_task();
+            ledger
+        };
+        let external_dependency_health = Arc::new(ExternalDependencyHealth::from_env());
+
+        // Build the AppState value to return, then optionally start background jobs
+        let app_state = Self {
             db,
             cache: Some(cache_arc),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -262,8 +285,53 @@ impl AppState {
             timeout_controller: Arc::new(TimeoutController::new(Default::default())),
             audit_writer,
             indexer_lag,
-            liquidity_thinness_alerts,
+            idempotency_ledger,
+            external_dependency_health,
+        };
+
+        // Start cache prewarm job if configured via env `PREWARM_PAIRS`.
+        // Format: comma separated pairs like "native/USDC,native/EURC"
+        if let Ok(pairs_list) = std::env::var("PREWARM_PAIRS") {
+            let pairs: Vec<(String, String)> = pairs_list
+                .split(',')
+                .filter_map(|s| {
+                    let s = s.trim();
+                    if s.is_empty() {
+                        return None;
+                    }
+                    let parts: Vec<&str> = s.split('/').collect();
+                    if parts.len() != 2 {
+                        return None;
+                    }
+                    Some((parts[0].to_string(), parts[1].to_string()))
+                })
+                .collect();
+
+            if !pairs.is_empty() {
+                let interval_secs = std::env::var("PREWARM_INTERVAL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60);
+
+                let amount = std::env::var("PREWARM_AMOUNT").unwrap_or_else(|_| "1".to_string());
+                let slippage = std::env::var("PREWARM_SLIPPAGE_BPS")
+                    .ok()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(50);
+
+                let config = PrewarmConfig {
+                    pairs,
+                    interval_secs,
+                    amount,
+                    slippage_bps: slippage,
+                };
+
+                let job = PrewarmJob::new(config, Arc::new(app_state.clone()));
+                Arc::new(job).start();
+            }
         }
+
+        app_state
     }
 
     /// Create worker pool with configuration
