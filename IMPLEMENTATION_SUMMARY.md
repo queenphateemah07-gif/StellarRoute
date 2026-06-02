@@ -191,5 +191,3 @@ The hero section features:
 Issue #523 has been successfully implemented with all acceptance criteria met. The feature is production-ready, fully tested, accessible, and documented.
 
 
-// Starting out
->>>>>>> Stashed changes

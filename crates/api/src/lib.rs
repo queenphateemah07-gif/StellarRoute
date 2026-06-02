@@ -7,6 +7,7 @@ pub mod admin_audit;
 pub mod budget;
 pub mod cache;
 pub mod compression;
+pub mod consistency_guard;
 pub mod dependency_health;
 pub mod docs;
 pub mod error;
