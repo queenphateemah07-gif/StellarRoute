@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { Header } from "@/components/Header";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/layout/app-shell";
+import ErrorBoundary from "../components/ErrorBoundary";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,6 +19,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "StellarRoute - DEX Aggregator for Stellar",
   description: "Best-price routing across Stellar DEX and Soroban AMM pools",
+
+  manifest: "/manifest.json",
+  themeColor: "#0b1220",
+
+  icons: {
+    icon: "/icons/icon-192.svg",
+    apple: "/icons/icon-192.svg",
+  },
+
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "StellarRoute",
+  },
 };
 
 export default function RootLayout({
@@ -31,11 +45,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}
       >
-        <Providers>
-          <AppShell>
-            <main className="flex-1">{children}</main>
-          </AppShell>
-        </Providers>
+        <ErrorBoundary>
+          <Providers>
+            <AppShell>{children}</AppShell>
+          </Providers>
+        </ErrorBoundary>
+
         <Toaster position="top-right" richColors />
       </body>
     </html>

@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 use crate::{
     cache,
     error::{ApiError, Result},
-    models::{request::AssetPath, AssetInfo, OrderbookLevel, OrderbookResponse},
+    models::{request::AssetPath, AssetInfo, OrderbookLevel, OrderbookResponse, OrderbookSummary},
     state::AppState,
 };
 
@@ -28,9 +28,48 @@ use crate::{
     ),
     responses(
         (status = 200, description = "Orderbook data", body = OrderbookResponse),
-        (status = 400, description = "Invalid asset", body = ErrorResponse),
-        (status = 404, description = "Asset not found", body = ErrorResponse),
-        (status = 500, description = "Internal server error", body = ErrorResponse),
+        (
+            status = 400,
+            description = "Invalid asset",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "invalid_asset",
+                    "message": "Invalid base asset: unknown asset format"
+                }
+            })
+        ),
+        (
+            status = 404,
+            description = "Asset not found",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "not_found",
+                    "message": "Asset not found in orderbook"
+                }
+            })
+        ),
+        (
+            status = 500,
+            description = "Internal server error",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "internal_error",
+                    "message": "An internal error occurred"
+                }
+            })
+        ),
     )
 )]
 pub async fn get_orderbook(
@@ -47,6 +86,7 @@ pub async fn get_orderbook(
                 .await
             {
                 debug!("Returning cached orderbook for {}/{}", base, quote);
+                state.liquidity_thinness_alerts.maybe_alert(&cached);
                 return Ok(Json(cached));
             }
         }
@@ -81,11 +121,14 @@ pub async fn get_orderbook(
         bids.len()
     );
 
+    let summary = compute_orderbook_summary(&bids, &asks);
+
     let response = OrderbookResponse {
         base_asset: base_info,
         quote_asset: quote_info,
         asks,
         bids,
+        summary,
         timestamp,
     };
 
@@ -102,7 +145,105 @@ pub async fn get_orderbook(
         }
     }
 
+    state.liquidity_thinness_alerts.maybe_alert(&response);
+
     Ok(Json(response))
+}
+
+/// Compute summary fields for an orderbook snapshot.
+fn compute_orderbook_summary(bids: &Vec<OrderbookLevel>, asks: &Vec<OrderbookLevel>) -> OrderbookSummary {
+    let best_bid = bids.first().map(|l| l.price.clone());
+    let best_ask = asks.first().map(|l| l.price.clone());
+
+    if let (Some(bid_s), Some(ask_s)) = (&best_bid, &best_ask) {
+        match (bid_s.parse::<f64>(), ask_s.parse::<f64>()) {
+            (Ok(b), Ok(a)) if a > 0.0 && b > 0.0 => {
+                let mid = (a + b) / 2.0;
+                let spread = ((a - b) / mid) * 10000.0;
+                OrderbookSummary {
+                    bid: best_bid,
+                    ask: best_ask,
+                    spread_bps: Some(spread.round() as i64),
+                    midpoint: Some(format!("{:.7}", mid)),
+                }
+            }
+            _ => OrderbookSummary {
+                bid: best_bid,
+                ask: best_ask,
+                spread_bps: None,
+                midpoint: None,
+            },
+        }
+    } else {
+        OrderbookSummary {
+            bid: best_bid,
+            ask: best_ask,
+            spread_bps: None,
+            midpoint: None,
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lvl(price: &str, amount: &str, total: &str) -> OrderbookLevel {
+        OrderbookLevel {
+            price: price.to_string(),
+            amount: amount.to_string(),
+            total: total.to_string(),
+        }
+    }
+
+    #[test]
+    fn summary_empty_book() {
+        let bids: Vec<OrderbookLevel> = vec![];
+        let asks: Vec<OrderbookLevel> = vec![];
+
+        let s = compute_orderbook_summary(&bids, &asks);
+        assert!(s.bid.is_none());
+        assert!(s.ask.is_none());
+        assert!(s.midpoint.is_none());
+        assert!(s.spread_bps.is_none());
+    }
+
+    #[test]
+    fn summary_only_bids() {
+        let bids = vec![lvl("0.1050000", "100.0", "10.5")];
+        let asks: Vec<OrderbookLevel> = vec![];
+
+        let s = compute_orderbook_summary(&bids, &asks);
+        assert_eq!(s.bid.as_deref(), Some("0.1050000"));
+        assert!(s.ask.is_none());
+        assert!(s.midpoint.is_none());
+        assert!(s.spread_bps.is_none());
+    }
+
+    #[test]
+    fn summary_only_asks() {
+        let bids: Vec<OrderbookLevel> = vec![];
+        let asks = vec![lvl("0.1060000", "50.0", "5.3")];
+
+        let s = compute_orderbook_summary(&bids, &asks);
+        assert!(s.bid.is_none());
+        assert_eq!(s.ask.as_deref(), Some("0.1060000"));
+        assert!(s.midpoint.is_none());
+        assert!(s.spread_bps.is_none());
+    }
+
+    #[test]
+    fn summary_both_sides() {
+        let bids = vec![lvl("0.1050000", "100.0", "10.5")];
+        let asks = vec![lvl("0.1060000", "50.0", "5.3")];
+
+        let s = compute_orderbook_summary(&bids, &asks);
+        assert_eq!(s.bid.as_deref(), Some("0.1050000"));
+        assert_eq!(s.ask.as_deref(), Some("0.1060000"));
+        assert_eq!(s.midpoint.as_deref(), Some("0.1055000"));
+        assert_eq!(s.spread_bps, Some(95));
+    }
 }
 
 /// Find asset ID in database
@@ -118,7 +259,7 @@ async fn find_asset_id(state: &AppState, asset: &AssetPath) -> Result<uuid::Uuid
             "#,
         )
         .bind(&asset_type)
-        .fetch_optional(&state.db)
+        .fetch_optional(state.db.read_pool())
         .await?
     } else {
         sqlx::query(
@@ -133,7 +274,7 @@ async fn find_asset_id(state: &AppState, asset: &AssetPath) -> Result<uuid::Uuid
         .bind(&asset_type)
         .bind(&asset.asset_code)
         .bind(&asset.asset_issuer)
-        .fetch_optional(&state.db)
+        .fetch_optional(state.db.read_pool())
         .await?
     };
 
@@ -168,7 +309,7 @@ async fn fetch_orderbook_side(
     )
     .bind(selling_id)
     .bind(buying_id)
-    .fetch_all(&state.db)
+    .fetch_all(state.db.read_pool())
     .await?;
 
     // Aggregate by price level

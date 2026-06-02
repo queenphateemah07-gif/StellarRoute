@@ -23,7 +23,35 @@ use crate::{
     tag = "trading",
     responses(
         (status = 200, description = "List of trading pairs", body = PairsResponse),
-        (status = 500, description = "Internal server error", body = ErrorResponse),
+        (
+            status = 400,
+            description = "Invalid pagination parameters",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "validation_error",
+                    "message": "Invalid cursor; expected a numeric offset"
+                }
+            })
+        ),
+        (
+            status = 404,
+            description = "Trading pairs not found",
+            body = crate::models::ErrorResponse,
+            example = json!({
+                "v": 1,
+                "timestamp": 1740312000000_i64,
+                "request_id": "req_01hyxk6bzv4n9p8m8j1f4c0a2r",
+                "data": {
+                    "error": "not_found",
+                    "message": "No trading pairs found"
+                }
+            })
+        ),
+        (status = 500, description = "Internal server error", body = crate::models::ErrorResponse),
     )
 )]
 pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<PairsResponse>> {
@@ -62,7 +90,7 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
         limit 100
         "#,
     )
-    .fetch_all(&state.db)
+    .fetch_all(state.db.read_pool())
     .await
     .map_err(|e| ApiError::Database(Arc::new(e)))?;
 
@@ -74,7 +102,7 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
 
         // Build AssetInfo helpers so we can derive both display names and
         // canonical identifiers from a single source of truth.
-        let base_info = if selling_type == "native" {
+        let selling_info = if selling_type == "native" {
             AssetInfo::native()
         } else {
             AssetInfo::credit(
@@ -84,7 +112,7 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
             )
         };
 
-        let counter_info = if buying_type == "native" {
+        let buying_info = if buying_type == "native" {
             AssetInfo::native()
         } else {
             AssetInfo::credit(
@@ -93,6 +121,17 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
                 row.get("buying_issuer"),
             )
         };
+
+        let selling_canonical = selling_info.to_canonical();
+        let buying_canonical = buying_info.to_canonical();
+
+        // Normalize pair ordering so base/counter consistently reflect
+        // canonical ordering regardless of how the DB stores the direction.
+        let (base_info, counter_info) =
+            match stellarroute_routing::normalize_pair(&selling_canonical, &buying_canonical) {
+                (b, _) if *b == selling_canonical => (selling_info.clone(), buying_info.clone()),
+                _ => (buying_info.clone(), selling_info.clone()),
+            };
 
         let offer_count: i64 = row.get("offer_count");
         let last_updated: Option<chrono::DateTime<chrono::Utc>> = row.get("last_updated");
@@ -107,11 +146,17 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
         });
     }
 
+    // Sort by canonical pair ordering for deterministic, consistent output.
+    pairs.sort_by(|a, b| a.base_asset.cmp(&b.base_asset).then(a.counter_asset.cmp(&b.counter_asset)));
+
     debug!("Found {} trading pairs", pairs.len());
 
     let response = PairsResponse {
         total: pairs.len(),
         pairs,
+        limit: None,
+        next_cursor: None,
+        prev_cursor: None,
     };
 
     // Cache the response for 10 s to keep latency well under the 100 ms SLA.
@@ -128,4 +173,19 @@ pub async fn list_pairs(State(state): State<Arc<AppState>>) -> Result<Json<Pairs
     }
 
     Ok(Json(response))
+}
+
+/// Alias of `/api/v1/pairs` for backward compatibility.
+#[utoipa::path(
+    get,
+    path = "/api/v1/markets",
+    tag = "trading",
+    responses(
+        (status = 200, description = "List of active markets", body = PairsResponse),
+        (status = 400, description = "Invalid pagination parameters", body = crate::models::ErrorResponse),
+        (status = 500, description = "Internal server error", body = crate::models::ErrorResponse),
+    )
+)]
+pub async fn list_markets(State(state): State<Arc<AppState>>) -> Result<Json<PairsResponse>> {
+    list_pairs(State(state)).await
 }

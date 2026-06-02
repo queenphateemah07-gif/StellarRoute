@@ -1,9 +1,24 @@
-import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowRight, ArrowDown, Info, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { ArrowDown, ArrowRight, ChevronDown, Info } from "lucide-react";
+import { useRef, useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
+import { useVirtualWindow } from "@/hooks/useVirtualWindow";
+import { LoadingState } from "@/components/shared/ViewState";
+
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
-import { RouteDisplaySkeleton } from "./RouteDisplaySkeleton";
+
+export interface AlternativeRoute {
+  id: string;
+  venue: string;
+  expectedAmount: string;
+  hops?: Array<{
+    id: string;
+    fromAsset: string;
+    toAsset: string;
+    venue: string;
+    fee: string;
+  }>;
+}
 
 interface RouteDisplayProps {
   amountOut: string;
@@ -13,6 +28,95 @@ interface RouteDisplayProps {
   volatility?: "high" | "medium" | "low";
   /** Show loading skeleton */
   isLoading?: boolean;
+  /** Optional alternative route fixture data */
+  alternativeRoutes?: AlternativeRoute[];
+  /** Callback when an alternative route is selected */
+  onSelect?: (route: AlternativeRoute) => void;
+}
+
+const ROUTE_VIRTUALIZATION_THRESHOLD = 8;
+const ROUTE_ROW_HEIGHT = 44;
+const ROUTE_OVERSCAN = 2;
+
+function buildAlternativeRoutes(amountOut: string): AlternativeRoute[] {
+  const venues = ["AQUA Pool", "SDEX", "Blend Pool", "Phoenix AMM"];
+  const baseAmount = Number.parseFloat(amountOut || "0");
+
+  return venues.map((venue, index) => ({
+    id: `route-${index}`,
+    venue,
+    expectedAmount: `≈ ${(baseAmount * (0.995 - index * 0.0015)).toFixed(4)}`,
+    hops:
+      index % 2 === 0
+        ? [
+            {
+              id: `${index}-0`,
+              fromAsset: "XLM",
+              toAsset: "USDC",
+              venue,
+              fee: "0.00001 XLM",
+            },
+          ]
+        : [
+            {
+              id: `${index}-0`,
+              fromAsset: "XLM",
+              toAsset: "AQUA",
+              venue: "SDEX",
+              fee: "0.00001 XLM",
+            },
+            {
+              id: `${index}-1`,
+              fromAsset: "AQUA",
+              toAsset: "USDC",
+              venue,
+              fee: "0.00002 XLM",
+            },
+          ],
+  }));
+}
+
+function parseFeeToNumber(fee: string): number {
+  const numeric = Number.parseFloat(fee);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function AlternativeRouteButton({
+  route,
+  isSelected = false,
+  onSelect,
+}: {
+  route: AlternativeRoute;
+  isSelected?: boolean;
+  onSelect?: (route: AlternativeRoute) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`alternative-route-${route.id}`}
+      aria-pressed={isSelected}
+      data-selected={isSelected ? "true" : undefined}
+      className={`w-full flex flex-wrap items-center justify-between transition-all duration-150 p-1 -mx-1 rounded hover:bg-muted/50 focus:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 gap-1 text-left active:scale-[0.99] ${
+        isSelected
+          ? "opacity-100 ring-2 ring-primary/40 bg-muted/50"
+          : "opacity-60 hover:opacity-100 focus:opacity-100"
+      }`}
+      onClick={() => onSelect?.(route)}
+    >
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="font-medium">XLM</span>
+        <ArrowRight className="h-3 w-3" />
+        <span className="border border-border/50 rounded bg-background px-1.5 py-0.5 text-[10px]">
+          {route.venue}
+        </span>
+        <ArrowRight className="h-3 w-3" />
+        <span className="font-medium">USDC</span>
+      </div>
+      <span className="text-xs font-medium text-muted-foreground">
+        {route.expectedAmount}
+      </span>
+    </button>
+  );
 }
 
 export function RouteDisplay({
@@ -20,15 +124,45 @@ export function RouteDisplay({
   confidenceScore = 85,
   volatility = "low",
   isLoading = false,
+  alternativeRoutes,
+  onSelect,
 }: RouteDisplayProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const routes = alternativeRoutes ?? buildAlternativeRoutes(amountOut);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const handleSelect = (route: AlternativeRoute) => {
+    setSelectedRouteId(route.id);
+    onSelect?.(route);
+  };
+  const shouldVirtualize = routes.length > ROUTE_VIRTUALIZATION_THRESHOLD;
+  const virtualWindow = useVirtualWindow({
+    containerRef: scrollRef,
+    itemCount: routes.length,
+    itemHeight: ROUTE_ROW_HEIGHT,
+    overscan: ROUTE_OVERSCAN,
+    enabled: shouldVirtualize,
+    defaultViewportHeight: ROUTE_ROW_HEIGHT * 4,
+  });
+
+  const visibleRoutes = shouldVirtualize
+    ? routes.slice(virtualWindow.startIndex, virtualWindow.endIndex)
+    : routes;
+  const selectedRoute =
+    routes.find((route) => route.id === selectedRouteId) ?? routes[0] ?? null;
+  const selectedRouteHops = selectedRoute?.hops ?? [];
+  const totalRouteFee = selectedRouteHops.reduce(
+    (sum, hop) => sum + parseFeeToNumber(hop.fee),
+    0,
+  );
 
   if (isLoading) {
-    return <RouteDisplaySkeleton />;
+    return <LoadingState message="Finding best route…" />;
   }
 
   return (
-    <div className="rounded-xl border border-border/50 p-4 space-y-4 transition-all duration-200 hover:border-border hover:shadow-sm focus-within:ring-2 focus-within:ring-primary/20">
+    <div data-testid="route-display" className="rounded-xl border border-border/50 p-4 space-y-4 transition-all duration-200 hover:border-border hover:shadow-sm focus-within:ring-2 focus-within:ring-primary/20">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h4 className="text-sm font-medium">Best Route</h4>
@@ -36,10 +170,12 @@ export function RouteDisplay({
         </div>
         <div className="flex items-center gap-2">
           <ConfidenceIndicator score={confidenceScore} volatility={volatility} />
-          <Badge variant="secondary" className="text-xs bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-emerald-500/20 transition-colors">
+          <Badge
+            variant="secondary"
+            className="text-xs bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-emerald-500/20 transition-colors"
+          >
             Optimal
           </Badge>
-          {/* Task 5.3: "Show route details" toggle as <button> with 44×44px touch target */}
           <button
             type="button"
             onClick={() => setShowDetails((prev) => !prev)}
@@ -54,11 +190,12 @@ export function RouteDisplay({
         </div>
       </div>
 
-      {/* Task 5.1: Route path — flex-col on mobile, flex-row on sm+ */}
       <div className="flex flex-col sm:flex-row items-center bg-muted/50 rounded-lg p-3 overflow-hidden gap-1 sm:gap-0 sm:justify-between transition-colors duration-150 hover:bg-muted/70">
         <div className="flex flex-col flex-shrink-0 min-w-[40px] items-center sm:items-start">
           <span className="text-xs font-semibold">XLM</span>
-          <span className="text-[10px] text-muted-foreground leading-none">Stellar</span>
+          <span className="text-[10px] text-muted-foreground leading-none">
+            Stellar
+          </span>
         </div>
 
         <ArrowDown className="h-4 w-4 text-muted-foreground flex-shrink-0 sm:hidden" />
@@ -73,27 +210,120 @@ export function RouteDisplay({
 
         <div className="flex flex-col text-right flex-shrink-0 min-w-[60px] items-center sm:items-end">
           <span className="text-xs font-semibold">USDC</span>
-          <span className="text-[10px] text-muted-foreground truncate max-w-[80px]" title={`${amountOut} expected`}>{amountOut} exp.</span>
+          <span
+            className="text-[10px] text-muted-foreground truncate max-w-[80px]"
+            title={`${amountOut} expected`}
+          >
+            {amountOut} exp.
+          </span>
         </div>
       </div>
 
       <div className="pt-3 border-t border-border/50 overflow-x-hidden">
-        <h4 className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">Alternative Routes</h4>
-        <button
-          type="button"
-          className="w-full flex flex-wrap items-center justify-between opacity-60 hover:opacity-100 focus:opacity-100 transition-all duration-150 p-1 -mx-1 rounded hover:bg-muted/50 focus:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 gap-1 text-left active:scale-[0.99]"
-          onClick={() => console.log("Selecting alternative route...")}
+        <h4 className="text-[11px] font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+          Alternative Routes
+        </h4>
+        <div
+          ref={scrollRef}
+          data-testid="alternative-routes-scroll"
+          className={shouldVirtualize ? "max-h-44 overflow-auto pr-1" : ""}
         >
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="font-medium">XLM</span>
-            <ArrowRight className="h-3 w-3" />
-            <span className="border border-border/50 rounded bg-background px-1.5 py-0.5 text-[10px]">SDEX</span>
-            <ArrowRight className="h-3 w-3" />
-            <span className="font-medium">USDC</span>
-          </div>
-          <span className="text-xs font-medium text-muted-foreground">≈ {(parseFloat(amountOut) * 0.995).toFixed(4)}</span>
-        </button>
+          {shouldVirtualize ? (
+            <div
+              style={{
+                height: virtualWindow.totalHeight,
+                position: "relative",
+              }}
+            >
+              {visibleRoutes.map((route, index) => {
+                const absoluteIndex = virtualWindow.startIndex + index;
+                return (
+                  <div
+                    key={route.id}
+                    style={{
+                      position: "absolute",
+                      top: absoluteIndex * ROUTE_ROW_HEIGHT,
+                      left: 0,
+                      right: 0,
+                      height: ROUTE_ROW_HEIGHT,
+                    }}
+                  >
+                    <AlternativeRouteButton
+                      route={route}
+                      isSelected={selectedRouteId === route.id}
+                      onSelect={handleSelect}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {visibleRoutes.map((route) => (
+                <AlternativeRouteButton
+                  key={route.id}
+                  route={route}
+                  isSelected={selectedRouteId === route.id}
+                  onSelect={handleSelect}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+
+      {showDetails && selectedRoute && (
+        <div
+          aria-label="Route detail drawer"
+          className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Per-hop route details
+            </h5>
+            <span className="text-xs text-muted-foreground">
+              {selectedRouteHops.length} hop{selectedRouteHops.length === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          {selectedRouteHops.length > 0 ? (
+            <div aria-label="Per-hop route details" className="space-y-2">
+              {selectedRouteHops.map((hop, index) => (
+                <div
+                  key={hop.id}
+                  className="rounded-md border border-border/40 bg-background/70 px-3 py-2"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium">
+                    <span>
+                      Hop {index + 1}: {hop.fromAsset} {'->'} {hop.toAsset}
+                    </span>
+                    <span className="text-muted-foreground">{hop.venue}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>Fee</span>
+                    <span>{hop.fee}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No hop breakdown available for this route.
+            </p>
+          )}
+
+          <div className="rounded-md border border-border/40 bg-background/70 px-3 py-2">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span>Estimated total fees</span>
+              <span>{totalRouteFee.toFixed(5)} XLM</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Route venue</span>
+              <span>{selectedRoute.venue}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

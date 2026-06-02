@@ -15,8 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { TradingPair } from "@/types";
+import { AssetIcon } from "@/components/shared/AssetIcon";
 import { TokenSearchModal } from "@/components/shared/TokenSearchModal";
 import { useRecentTokens } from "@/hooks/useRecentTokens";
+import { SwapPresetTemplates } from "./SwapPresetTemplates";
 
 export interface TokenPairSelectorProps {
   /** Available trading pairs from the API */
@@ -77,12 +79,18 @@ function AssetButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex flex-col items-start gap-1 rounded-lg border bg-background p-3 transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed",
+        "flex flex-col items-start gap-2 rounded-lg border bg-background p-3 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       )}
     >
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-lg font-semibold">{code || "Select"}</span>
+      <div className="flex items-center gap-2">
+        <AssetIcon
+          symbol={code || "Select"}
+          className="size-8 border-border/50 bg-primary/5"
+        />
+        <span className="text-lg font-semibold">{code || "Select"}</span>
+      </div>
       {issuer && (
         <span className="text-xs text-muted-foreground font-mono">
           {truncateIssuer(issuer)}
@@ -200,6 +208,12 @@ export function TokenPairSelector({
   return (
     <Card className={cn("p-4", className)}>
       <div className="space-y-4">
+        <SwapPresetTemplates 
+          onSelect={onPairChange}
+          selectedBase={selectedBase}
+          selectedQuote={selectedQuote}
+        />
+
         <div className="flex items-center gap-3">
           <div className="flex-1">
             {loading ? (

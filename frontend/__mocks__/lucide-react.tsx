@@ -35,10 +35,14 @@ export const XIcon = Icon;
 
 // Additional icons referenced by components/tests
 export const ArrowLeftRight = Icon;
+export const ArrowRightLeft = Icon;
 export const Check = Icon;
+export const Clock = Icon;
+export const Clock3 = Icon;
 export const Copy = Icon;
 export const History = Icon;
 export const Search = Icon;
+export const Download = Icon;
 
 export const AlertTriangle = Icon;
 export const DollarSign = Icon;
@@ -49,6 +53,11 @@ export const TrendingUp = Icon;
 
 export const TriangleAlert = Icon;
 export const AlertCircle = Icon;
+export const MapPin = Icon;
+export const HelpCircle = Icon;
+export const ArrowUpDown = Icon;
+export const Settings2 = Icon;
+export const Route = Icon;
 
 // Sonner "Toaster" icon set
 export const CircleCheckIcon = Icon;
@@ -56,3 +65,14 @@ export const InfoIcon = Icon;
 export const Loader2Icon = Icon;
 export const OctagonXIcon = Icon;
 export const TriangleAlertIcon = Icon;
+
+// BatchSwapPreview + ViewState icons
+export const Lock = Icon;
+export const Inbox = Icon;
+export const Plus = Icon;
+export const Shield = Icon;
+export const ShieldAlert = Icon;
+export const Compass = Icon;
+export const Zap = Icon;
+export const Maximize2 = Icon;
+export const Minimize2 = Icon;

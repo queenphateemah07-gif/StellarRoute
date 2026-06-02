@@ -1,9 +1,26 @@
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HorizonMode {
+    Poll,
+    Sse,
+}
+
+impl Default for HorizonMode {
+    fn default() -> Self {
+        Self::Poll
+    }
+}
+
+#[derive(Clone, Deserialize)]
 pub struct IndexerConfig {
     /// Horizon base URL, e.g. `https://horizon.stellar.org` or `https://horizon-testnet.stellar.org`
     pub stellar_horizon_url: String,
+
+    /// Ingestion mode for SDEX offers
+    #[serde(default)]
+    pub horizon_mode: HorizonMode,
 
     /// Soroban RPC base URL
     pub soroban_rpc_url: String,
@@ -61,6 +78,30 @@ pub struct IndexerConfig {
     /// Snapshot compaction after threshold hours (env: `SNAPSHOT_COMPACTION_HOURS`).
     #[serde(default = "default_snapshot_compaction_hours")]
     pub snapshot_compaction_hours: i32,
+}
+
+impl std::fmt::Debug for IndexerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexerConfig")
+            .field("stellar_horizon_url", &self.stellar_horizon_url)
+            .field("horizon_mode", &self.horizon_mode)
+            .field("soroban_rpc_url", &self.soroban_rpc_url)
+            .field("router_contract_address", &self.router_contract_address)
+            .field("database_url", &"[REDACTED]")
+            .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("amm_poll_interval_secs", &self.amm_poll_interval_secs)
+            .field("stale_threshold_secs", &self.stale_threshold_secs)
+            .field("horizon_limit", &self.horizon_limit)
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connection_timeout_secs", &self.connection_timeout_secs)
+            .field("idle_timeout_secs", &self.idle_timeout_secs)
+            .field("max_lifetime_secs", &self.max_lifetime_secs)
+            .field("maintenance_interval_mins", &self.maintenance_interval_mins)
+            .field("snapshot_retention_days", &self.snapshot_retention_days)
+            .field("snapshot_compaction_hours", &self.snapshot_compaction_hours)
+            .finish()
+    }
 }
 
 fn default_poll_interval_secs() -> u64 {
@@ -121,6 +162,26 @@ impl IndexerConfig {
 
     /// Convenience constructor from environment variables.
     pub fn from_env() -> std::result::Result<Self, config::ConfigError> {
+        let required = [
+            "DATABASE_URL",
+            "STELLAR_HORIZON_URL",
+            "SOROBAN_RPC_URL",
+            "ROUTER_CONTRACT_ADDRESS",
+        ];
+        let mut missing = Vec::new();
+        for key in required {
+            match std::env::var(key) {
+                Ok(value) if !value.trim().is_empty() => {}
+                _ => missing.push(key),
+            }
+        }
+        if !missing.is_empty() {
+            return Err(config::ConfigError::Message(format!(
+                "Missing required environment variable(s): {}",
+                missing.join(", ")
+            )));
+        }
+
         Self::load()
     }
 }
