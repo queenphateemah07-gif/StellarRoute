@@ -11,6 +11,7 @@ pub mod pairs;
 pub mod assets;
 pub mod prometheus;
 pub mod quote;
+pub mod contract_registry;
 
 pub mod replay;
 pub mod routes_endpoint;
@@ -78,5 +79,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Canary routes
         .route("/api/v1/system/canary/report", get(canary::get_report))
         .route("/api/v1/system/canary/config", post(canary::update_config))
+        // Contract registry routes
+        .route(
+            "/api/v1/contracts/registry",
+            get(contract_registry::list_contract_versions),
+        )
+        .route(
+            "/api/v1/contracts/registry/:contract_name",
+            get(contract_registry::get_contract_version),
+        )
+        .route(
+            "/api/v1/contracts/registry/:contract_name/network/:network",
+            get(contract_registry::get_contract_version_by_network),
+        )
         .with_state(state)
 }
