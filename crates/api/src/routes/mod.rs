@@ -1,5 +1,6 @@
 //! API routes
 
+pub mod admin;
 pub mod health;
 pub mod metrics;
 pub mod orderbook;
@@ -32,6 +33,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/quote/:base/:quote", get(quote::get_quote))
         .route("/api/v1/route/:base/:quote", get(quote::get_route))
         .route("/api/v1/batch/quote", axum::routing::post(quote::get_batch_quotes))
+        .route(
+            "/api/v1/admin/cache/flush/:base/:quote",
+            axum::routing::post(admin::flush_cache),
+        )
 
         // Replay routes
         .route("/api/v1/replay", get(replay::list_artifacts))

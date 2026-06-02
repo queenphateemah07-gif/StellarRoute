@@ -74,6 +74,7 @@ async fn main() {
         enable_cors: true,
         enable_compression: true,
         redis_url: std::env::var("REDIS_URL").ok(),
+        admin_auth_token: std::env::var("ADMIN_AUTH_TOKEN").ok(),
         quote_cache_ttl_seconds: std::env::var("QUOTE_CACHE_TTL_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())

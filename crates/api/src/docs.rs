@@ -3,9 +3,9 @@
 use utoipa::OpenApi;
 
 use crate::models::{
-    AssetInfo, CacheMetricsResponse, ErrorResponse, HealthResponse, OrderbookLevel,
-    OrderbookResponse, PairsResponse, PathStep, QuoteRationaleMetadata, QuoteResponse,
-    RouteResponse, TradingPair, VenueEvaluation,
+    AssetInfo, CacheFlushResponse, CacheMetricsResponse, ErrorResponse, HealthResponse,
+    OrderbookLevel, OrderbookResponse, PairsResponse, PathStep, QuoteRationaleMetadata,
+    QuoteResponse, RouteResponse, TradingPair, VenueEvaluation,
 };
 
 /// OpenAPI documentation
@@ -18,10 +18,12 @@ use crate::models::{
         crate::routes::orderbook::get_orderbook,
         crate::routes::quote::get_quote,
         crate::routes::quote::get_route,
+        crate::routes::admin::flush_cache,
     ),
     components(schemas(
         HealthResponse,
         CacheMetricsResponse,
+        CacheFlushResponse,
         PairsResponse,
         TradingPair,
         AssetInfo,
@@ -37,6 +39,7 @@ use crate::models::{
     tags(
         (name = "health", description = "Health check endpoints"),
         (name = "trading", description = "Trading and market data endpoints"),
+        (name = "admin", description = "Administrative endpoints"),
     ),
     info(
         title = "StellarRoute API",

@@ -96,6 +96,8 @@ pub struct AppState {
     pub version: String,
     /// Cache policy settings
     pub cache_policy: CachePolicy,
+    /// Optional admin auth token used for operator-only endpoints
+    pub admin_auth_token: Option<String>,
     /// Cache hit/miss counters
     pub cache_metrics: Arc<CacheMetrics>,
     /// Route computation worker pool
@@ -132,6 +134,7 @@ impl AppState {
             cache: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             cache_policy,
+            admin_auth_token: None,
             cache_metrics: Arc::new(CacheMetrics::default()),
             worker_pool,
             quote_single_flight: Arc::new(
@@ -164,6 +167,7 @@ impl AppState {
             cache: Some(Arc::new(Mutex::new(cache))),
             version: env!("CARGO_PKG_VERSION").to_string(),
             cache_policy,
+            admin_auth_token: None,
             cache_metrics: Arc::new(CacheMetrics::default()),
             worker_pool,
             quote_single_flight: Arc::new(
@@ -182,6 +186,12 @@ impl AppState {
         let queue = JobQueue::new(db);
         let config = WorkerPoolConfig::default();
         Arc::new(RouteWorkerPool::new(config, queue))
+    }
+
+    /// Attach an admin auth token to the state for protected operator endpoints.
+    pub fn with_admin_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.admin_auth_token = Some(token.into());
+        self
     }
 
     /// Wrap in Arc for sharing across handlers
