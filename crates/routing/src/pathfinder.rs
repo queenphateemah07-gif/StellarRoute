@@ -230,4 +230,3 @@ impl Pathfinder {
         Ok(paths)
     }
 }
-
