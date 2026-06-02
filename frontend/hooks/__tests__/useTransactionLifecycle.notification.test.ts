@@ -171,11 +171,20 @@ describe('useTransactionLifecycle — notification dispatch on terminal transiti
       void result.current.initiateSwap(tradeParams);
     });
 
+    // Flush microtasks so signTransaction resolves and setTimeout is called
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     // Advance past the deadline
     await act(async () => {
       vi.advanceTimersByTime(1500);
       await Promise.resolve();
     });
+
+    vi.useRealTimers();
 
     await waitFor(() => {
       expect(dispatchTransactionNotification).toHaveBeenCalledOnce();
@@ -183,12 +192,17 @@ describe('useTransactionLifecycle — notification dispatch on terminal transiti
 
     const [params] = (
       dispatchTransactionNotification as ReturnType<typeof vi.fn>
-    ).mock.calls[0] as Parameters<typeof dispatchTransactionNotification>;
+    ).mock.calls[0];
 
-    expect(params.status).toBe('dropped');
-
-    vi.useRealTimers();
-  });
+    expect(params).toEqual({
+      fromAmount: '100',
+      fromAsset: 'XLM',
+      toAmount: '25.50',
+      toAsset: 'USDC',
+      txId: expect.any(String),
+      status: 'dropped',
+    });
+  }, 10000);
 
   it('does NOT call dispatchTransactionNotification when notificationPreference.enabled is false', async () => {
     const { result } = renderHook(() =>
