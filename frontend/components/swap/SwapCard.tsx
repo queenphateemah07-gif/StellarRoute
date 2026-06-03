@@ -20,6 +20,7 @@ import { useOptimisticSwap } from '@/hooks/useOptimisticSwap';
 import type { PreSubmitSnapshot } from '@/types/transaction';
 import { useOptionalTradingPair } from '@/contexts/TradingPairContext';
 import { useExpertSettings } from '@/hooks/useExpertSettings';
+import { useWalletBalance } from '@/hooks/useWalletBalance';
 import {
   SESSION_RECOVERY_THRESHOLD_MS,
   type TradeFormSnapshot,
@@ -135,6 +136,14 @@ export function SwapCard() {
     network: walletAppNetwork,
     networkMismatch,
   } = useWallet();
+
+  // Fetch real wallet balance for the selected from-asset
+  const balanceState = useWalletBalance({
+    address: walletAddress,
+    asset: fromToken,
+    isConnected,
+    network: walletAppNetwork,
+  });
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState<AlternativeRoute | null>(
@@ -222,8 +231,8 @@ export function SwapCard() {
     setSelectedRoute,
   ]);
 
-  // Mock balance
-  const fromBalance = '100.00';
+  // Replace hardcoded balance with real wallet balance
+  const fromBalance = balanceState.balance ?? '0';
   const fromSymbol = fromToken === 'native' ? 'XLM' : fromToken.split(':')[0];
   const toSymbol = toToken === 'native' ? 'XLM' : toToken.split(':')[0];
 
@@ -371,20 +380,30 @@ export function SwapCard() {
   }, [quote.priceImpact, handleConfirm]);
 
   const handleMax = useCallback(() => {
-    setFromAmount(fromBalance);
-  }, [fromBalance, setFromAmount]);
+    // Use spendableBalance for XLM (accounts for base reserve)
+    // Use regular balance for other assets
+    const maxAmount =
+      fromToken === 'native' ? balanceState.spendableBalance : fromBalance;
+    setFromAmount(maxAmount ?? '0');
+  }, [fromToken, balanceState.spendableBalance, fromBalance, setFromAmount]);
 
   const handlePresetSelect = useCallback(
     (percentage: number) => {
       const balanceNum = parseFloat(fromBalance);
       if (isNaN(balanceNum) || balanceNum === 0) return;
 
-      const amount = balanceNum * percentage;
+      // For native assets, respect the spendable balance limit
+      const maxSpendable =
+        fromToken === 'native'
+          ? parseFloat(balanceState.spendableBalance ?? '0')
+          : balanceNum;
+
+      const amount = maxSpendable * percentage;
       // Round to 7 decimals to respect asset precision
       const rounded = Math.floor(amount * 10000000) / 10000000;
       setFromAmount(rounded.toString());
     },
-    [fromBalance, setFromAmount]
+    [fromBalance, fromToken, balanceState.spendableBalance, setFromAmount]
   );
 
   const handleSwitchTokens = useCallback(() => {
@@ -601,6 +620,8 @@ export function SwapCard() {
                   onMax={handleMax}
                   onPresetSelect={handlePresetSelect}
                   balance={`${fromBalance} ${fromSymbol}`}
+                  balanceLoading={balanceState.loading}
+                  balanceError={!!balanceState.error}
                   showPresets={isConnected}
                   className="flex-1"
                 />
