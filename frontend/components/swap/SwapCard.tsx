@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, RefreshCw } from 'lucide-react';
+import { ArrowUpDown, RefreshCw, Stethoscope } from 'lucide-react';
 import { AmountInput } from './AmountInput';
 import { TokenSelector } from './TokenSelector';
 import { PriceInfoPanel } from './PriceInfoPanel';
@@ -31,6 +31,7 @@ import { useCompactMode } from '@/hooks/useCompactMode';
 import { useShareableQuote } from '@/hooks/useShareableQuote';
 import { ShareQuoteButton } from './ShareQuoteButton';
 import { NetworkMismatchBanner } from '@/components/shared/NetworkMismatchBanner';
+import { DiagnosticsPanel } from '@/components/shared/DiagnosticsPanel';
 import { useWallet } from '@/components/providers/wallet-provider';
 import { signTransactionWithWallet } from '@/lib/wallet';
 import { submitToHorizon, getNetworkPassphrase } from '@/lib/wallet/submit';
@@ -180,6 +181,7 @@ export function SwapCard() {
   );
   const [isRecoveringSession, setIsRecoveringSession] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const hiddenAtRef = useRef<number | null>(null);
   const recoveryReason: 'refresh' | 'wake' | null = wakeRecoveryOpen
@@ -613,6 +615,15 @@ export function SwapCard() {
               <Button
                 variant="ghost"
                 size="icon"
+                onClick={() => setDiagnosticsOpen(true)}
+                aria-label={t('swap.card.diagnostics')}
+                className="h-9 w-9 rounded-xl hover:bg-muted/80"
+              >
+                <Stethoscope className="h-4.5 w-4.5 text-muted-foreground" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => quote.refresh()}
                 disabled={quote.loading}
                 aria-label={t('swap.card.refreshQuote')}
@@ -912,6 +923,14 @@ export function SwapCard() {
         isRecovering={isRecoveringSession}
         onRestore={handleRestoreRecovery}
         onDiscard={handleDiscardRecovery}
+      />
+
+      <DiagnosticsPanel
+        quote={quote.data}
+        requestId={quote.requestId}
+        lastQuotedAtMs={quote.lastQuotedAtMs}
+        isOpen={diagnosticsOpen}
+        onOpenChange={setDiagnosticsOpen}
       />
 
       {/* Footer Info */}
