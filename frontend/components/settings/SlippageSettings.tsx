@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle, AlertTriangle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettings } from "@/components/providers/settings-provider";
+import { useSwapI18n } from "@/lib/swap-i18n";
 
 export function SlippageSettings() {
   const { settings, selectProfile, updateProfile, addProfile, deleteProfile } = useSettings();
   const value = settings.slippageTolerance;
+  const { t } = useSwapI18n();
   
   const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
@@ -19,7 +21,7 @@ export function SlippageSettings() {
       if (customProfile) {
         updateProfile(customProfile.id, { value: clamped });
       } else {
-        addProfile({ name: 'Custom', value: clamped });
+        addProfile({ name: t('settings.slippage.custom'), value: clamped });
         // The newly added profile will need to be selected manually, 
         // wait, we should select it right after adding. 
         // Our addProfile doesn't return ID. Let's just update useSettings logic or find the newly created one.
@@ -37,7 +39,7 @@ export function SlippageSettings() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold tracking-tight">Slippage Tolerance</span>
+        <span className="text-sm font-semibold tracking-tight">{t('swap.settings.slippageTolerance')}</span>
         <span className={cn("text-xs font-bold px-2 py-0.5 rounded-full", 
           isHigh ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary")}>
           {value}%
@@ -63,12 +65,12 @@ export function SlippageSettings() {
             step="0.01"
             min="0.01"
             max="50"
-            aria-label="Custom slippage tolerance percentage"
+            aria-label={`Custom ${t('swap.settings.slippageTolerance')} percentage`}
             className={cn(
               "h-10 pr-6 font-bold text-right",
               !activeProfile?.isPreset && "border-primary ring-1 ring-primary/20"
             )}
-            placeholder="Custom"
+            placeholder={t('settings.slippage.custom')}
             value={customProfile ? customProfile.value : ""}
             onChange={(e) => {
               const val = parseFloat(e.target.value);
@@ -78,7 +80,7 @@ export function SlippageSettings() {
                   updateProfile(customProfile.id, { value: clamped });
                   selectProfile(customProfile.id);
                 } else {
-                  addProfile({ name: 'Custom', value: clamped });
+                  addProfile({ name: t('settings.slippage.custom'), value: clamped });
                   // In a real app we'd get the ID back and select it, 
                   // but we can just let addProfile handle it or select the non-preset.
                 }
@@ -99,7 +101,7 @@ export function SlippageSettings() {
                 e.stopPropagation();
                 deleteProfile(customProfile.id);
               }}
-              title="Delete Custom Profile"
+              title={t('settings.slippage.deleteCustom')}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -110,14 +112,14 @@ export function SlippageSettings() {
       {isLow && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-[11px] text-yellow-600 dark:text-yellow-400 font-medium">
           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
-          <p>Your transaction may fail if the price moves unfavorably by more than {value}%.</p>
+          <p>{t('settings.slippage.lowWarning', { value })}</p>
         </div>
       )}
 
       {isHigh && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-[11px] text-destructive font-medium">
           <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-          <p>High slippage increases the risk of frontrunning and getting a significantly worse price.</p>
+          <p>{t('settings.slippage.highWarning')}</p>
         </div>
       )}
     </div>

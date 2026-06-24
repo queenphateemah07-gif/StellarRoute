@@ -1,5 +1,6 @@
 'use client';
 
+import { Metadata } from 'next';
 import { useState } from 'react';
 import { useSettings } from '@/components/providers/settings-provider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +15,17 @@ import { FontScaleControl } from '@/components/settings/FontScaleControl';
 import { HighContrastToggle } from '@/components/settings/HighContrastToggle';
 import { BrowserNotificationSettings } from '@/components/settings/BrowserNotificationSettings';
 import { useBrowserNotifications } from '@/hooks/useBrowserNotifications';
+import { useSwapI18n } from '@/lib/swap-i18n';
+
+export const metadata: Metadata = {
+  title: 'Settings | StellarRoute',
+  description: 'Customize your StellarRoute experience with theme, language, and notification settings.',
+  openGraph: {
+    title: 'Settings | StellarRoute',
+    description: 'Personalize your StellarRoute interface and preferences.',
+    type: 'website',
+  },
+};
 
 export default function SettingsPage() {
   const { settings, updateSlippage, updateTheme, resetSettings } = useSettings();
@@ -25,6 +37,7 @@ export default function SettingsPage() {
     enableNotifications,
     disableNotifications,
   } = useBrowserNotifications();
+  const { t } = useSwapI18n();
 
   const handleSlippageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLocalSlippage(e.target.value);
@@ -36,32 +49,32 @@ export default function SettingsPage() {
       updateSlippage(value);
     } else {
       setLocalSlippage(settings.slippageTolerance.toString());
-      toast.error('Slippage must be between 0 and 50%');
+      toast.error(t('settings.slippage.error'));
     }
   };
 
   const handleReset = () => {
     resetSettings();
-    toast.success('Settings reset to defaults');
+    toast.success(t('settings.reset.success'));
   };
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-2xl">
-      <h1 className="text-3xl font-bold mb-6">Settings</h1>
+      <h1 className="text-3xl font-bold mb-6">{t('settings.page.title')}</h1>
 
       <div className="space-y-6">
         <LocaleSelector />
 
         <Card>
           <CardHeader>
-            <CardTitle>Trade Settings</CardTitle>
+            <CardTitle>{t('settings.trade.title')}</CardTitle>
             <CardDescription>
-              Configure your default trading parameters.
+              {t('settings.trade.description')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Default Slippage Tolerance (%)</label>
+              <label className="text-sm font-medium">{t('settings.slippage.label')}</label>
               <div className="flex items-center gap-4">
                 <Input
                   type="number"
@@ -74,7 +87,7 @@ export default function SettingsPage() {
                   className="max-w-[150px]"
                 />
                 <span className="text-sm text-muted-foreground">
-                  Typical: 0.5% - 1.0%
+                  {t('settings.slippage.typical')}
                 </span>
               </div>
             </div>
@@ -83,26 +96,26 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Appearance</CardTitle>
+            <CardTitle>{t('settings.appearance.title')}</CardTitle>
             <CardDescription>
-              Customize how StellarRoute looks on your device.
+              {t('settings.appearance.description')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Theme selector */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Theme</label>
+              <label className="text-sm font-medium">{t('settings.theme.label')}</label>
               <Select
                 value={settings.theme}
                 onValueChange={(value) => updateTheme(value as ThemeSetting)}
               >
                 <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Select theme" />
+                  <SelectValue placeholder={t('settings.theme.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="light">Light</SelectItem>
-                  <SelectItem value="dark">Dark</SelectItem>
-                  <SelectItem value="system">System</SelectItem>
+                  <SelectItem value="light">{t('settings.theme.light')}</SelectItem>
+                  <SelectItem value="dark">{t('settings.theme.dark')}</SelectItem>
+                  <SelectItem value="system">{t('settings.theme.system')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -115,9 +128,9 @@ export default function SettingsPage() {
         {/* Font scale control and high contrast — issues #522, #788 */}
         <Card>
           <CardHeader>
-            <CardTitle>Accessibility</CardTitle>
+            <CardTitle>{t('settings.accessibility.title')}</CardTitle>
             <CardDescription>
-              Adjust text size and other accessibility options.
+              {t('settings.accessibility.description')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -129,9 +142,9 @@ export default function SettingsPage() {
         {/* Browser notifications — issue #789 */}
         <Card>
           <CardHeader>
-            <CardTitle>Notifications</CardTitle>
+            <CardTitle>{t('settings.notifications.title')}</CardTitle>
             <CardDescription>
-              Receive browser notifications for quote refreshes and swap status updates.
+              {t('settings.notifications.description')}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -147,14 +160,14 @@ export default function SettingsPage() {
 
         <Card className="border-destructive/50">
           <CardHeader>
-            <CardTitle className="text-destructive">Reset Settings</CardTitle>
+            <CardTitle className="text-destructive">{t('settings.reset.title')}</CardTitle>
             <CardDescription>
-              Revert all settings to their original factory defaults.
+              {t('settings.reset.description')}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button variant="destructive" onClick={handleReset}>
-              Reset to Defaults
+              {t('settings.reset.button')}
             </Button>
           </CardContent>
         </Card>
