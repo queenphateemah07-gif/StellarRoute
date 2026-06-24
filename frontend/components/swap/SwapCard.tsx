@@ -57,11 +57,13 @@ import {
 } from './swapCardStory';
 
 export interface SwapCardProps {
+  /** Shows alternative route picker when routes beta is enabled. */
+  showRoutePicker?: boolean;
   /** Ladle story fixture — drives deterministic UI states for visual review. */
   storyFixture?: SwapCardStoryFixture;
 }
 
-export function SwapCard({ storyFixture }: SwapCardProps = {}) {
+export function SwapCard({ storyFixture, showRoutePicker = false }: SwapCardProps = {}) {
   const storyPresentation = storyFixture
     ? getSwapCardStoryPresentation(storyFixture)
     : null;
@@ -981,11 +983,13 @@ export function SwapCard({ storyFixture }: SwapCardProps = {}) {
                 onExportJson={() => handleExport('json')}
                 onExportCsv={() => handleExport('csv')}
               />
-              <RouteDisplay
-                amountOut={selectedRoute?.expectedAmount ?? displayToAmount}
-                isLoading={displayQuoteLoading}
-                onSelect={setSelectedRoute}
-              />
+              {showRoutePicker && (
+                <RouteDisplay
+                  amountOut={selectedRoute?.expectedAmount ?? displayToAmount}
+                  isLoading={displayQuoteLoading}
+                  onSelect={setSelectedRoute}
+                />
+              )}
               {/* Share Quote Button */}
               <div className="flex justify-end">
                 <ShareQuoteButton
