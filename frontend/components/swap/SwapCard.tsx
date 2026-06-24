@@ -34,10 +34,14 @@ import { NetworkMismatchBanner } from '@/components/shared/NetworkMismatchBanner
 import { DiagnosticsPanel } from '@/components/shared/DiagnosticsPanel';
 import { useWallet } from '@/components/providers/wallet-provider';
 import { signTransactionWithWallet } from '@/lib/wallet';
-import { submitToHorizon, getNetworkPassphrase } from '@/lib/wallet/submit';
+import { submitToHorizon, getNetworkPassphrase, getHorizonUrl } from '@/lib/wallet/submit';
+import { buildPathPaymentXdr } from '@/lib/wallet/xdr-builder';
+import { getFeatureFlag } from '@/lib/feature-flags';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useSwapI18n } from '@/lib/swap-i18n';
+import { useRoutes } from '@/hooks/useApi';
+import { emitRouteEvent, getPriceImpactTier } from '@/lib/telemetry';
 import { quoteExportToCsv, type QuoteExportPayload } from '@/lib/quote-export';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import {
@@ -91,6 +95,121 @@ export function SwapCard() {
     snapshotCurrent,
     reset,
   } = useSwapState();
+
+  // Fetch ranked routes from /api/v1/routes
+  const routesState = useRoutes(
+    fromToken,
+    toToken,
+    parseFloat(fromAmount) || undefined
+  );
+
+  // Merge quote alternatives and routes endpoint candidates
+  const mergedAlternativeRoutes = useMemo(() => {
+    const list: AlternativeRoute[] = [];
+
+    // 1. Add any alternative routes embedded in the quote
+    if (quote.data?.alternativeRoutes) {
+      quote.data.alternativeRoutes.forEach((alt) => {
+        list.push({
+          id: alt.id,
+          venue: alt.venue,
+          expectedAmount: alt.expectedAmount.startsWith('≈') ? alt.expectedAmount : `≈ ${alt.expectedAmount}`,
+          hops: [],
+        });
+      });
+    }
+
+    // 2. Add routes from the /api/v1/routes endpoint
+    if (routesState.data?.routes) {
+      routesState.data.routes.forEach((candidate, index) => {
+        const hopVenues = candidate.path.map((hop) => {
+          const source = hop.source;
+          if (source === 'sdex') return 'SDEX';
+          if (source.startsWith('amm:')) {
+            const name = source.substring(4);
+            if (name.toLowerCase() === 'aqua') return 'AQUA Pool';
+            if (name.toLowerCase() === 'phoenix') return 'Phoenix AMM';
+            if (name.toLowerCase() === 'blend') return 'Blend Pool';
+            return name.charAt(0).toUpperCase() + name.slice(1);
+          }
+          return source;
+        });
+        const uniqueHopVenues = hopVenues.filter((v, i) => i === 0 || v !== hopVenues[i - 1]);
+        const venueName = uniqueHopVenues.join(' + ');
+
+        const hops = candidate.path.map((hop, hopIndex) => {
+          const fromSymbol = hop.from_asset.asset_type === 'native' ? 'XLM' : (hop.from_asset.asset_code || 'UNK');
+          const toSymbol = hop.to_asset.asset_type === 'native' ? 'XLM' : (hop.to_asset.asset_code || 'UNK');
+          
+          let sourceName = hop.source;
+          if (sourceName === 'sdex') sourceName = 'SDEX';
+          else if (sourceName.startsWith('amm:')) {
+            const name = sourceName.substring(4);
+            if (name.toLowerCase() === 'aqua') sourceName = 'AQUA Pool';
+            else if (name.toLowerCase() === 'phoenix') sourceName = 'Phoenix AMM';
+            else if (name.toLowerCase() === 'blend') sourceName = 'Blend Pool';
+            else sourceName = name.charAt(0).toUpperCase() + sourceName.slice(1);
+          }
+
+          const feeXLM = ((hop.fee_bps || 30) / 100000).toFixed(5) + ' XLM';
+
+          return {
+            id: `candidate-${index}-hop-${hopIndex}`,
+            fromAsset: fromSymbol,
+            toAsset: toSymbol,
+            venue: sourceName,
+            fee: feeXLM,
+          };
+        });
+
+        // Avoid adding duplicates of the same venue name
+        const isDuplicate = list.some((item) => item.venue === venueName);
+        if (!isDuplicate) {
+          list.push({
+            id: `route-api-${index}`,
+            venue: venueName,
+            expectedAmount: `≈ ${parseFloat(candidate.estimated_output).toFixed(4)}`,
+            hops,
+            rawPath: candidate.path,
+            priceImpact: candidate.impact_bps / 100,
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [quote.data, routesState.data]);
+
+  const handleRouteSelect = useCallback((route: AlternativeRoute) => {
+    setSelectedRoute(route);
+    // Trigger re-quote
+    quote.refresh();
+    
+    const fromSymbol = fromToken === 'native' ? 'XLM' : fromToken.split(':')[0];
+    const toSymbol = toToken === 'native' ? 'XLM' : toToken.split(':')[0];
+    
+    // Emit route_select telemetry event
+    const hasDex = route.rawPath
+      ? route.rawPath.some((hop: any) => hop.source === 'sdex')
+      : route.venue.toLowerCase().includes('sdex');
+      
+    const hasAmm = route.rawPath
+      ? route.rawPath.some((hop: any) => hop.source.startsWith('amm:'))
+      : route.venue.toLowerCase().includes('amm') || route.venue.toLowerCase().includes('pool');
+      
+    const priceImpactVal = route.priceImpact ?? quote.priceImpact;
+    
+    emitRouteEvent('route_select', {
+      fromAssetCode: fromSymbol,
+      toAssetCode: toSymbol,
+      routeLength: route.rawPath ? route.rawPath.length : (quote.data?.path.length ?? 1),
+      priceImpactTier: getPriceImpactTier(priceImpactVal),
+      hasDex,
+      hasAmm,
+    });
+  }, [fromToken, toToken, quote]);
+
+  const isRoutesLoading = quote.loading || routesState.loading;
 
   // Initialize from URL parameters on mount
   useEffect(() => {
@@ -211,6 +330,21 @@ export function SwapCard() {
       : undefined,
     submitTransaction: (signedXdr) =>
       submitToHorizon(signedXdr, walletAppNetwork),
+    // Build real Stellar path-payment XDR when the integration flag is enabled.
+    // Falls back to "mock_xdr" stub when flag is off (default during development).
+    buildXdr: getFeatureFlag('realXdr') && walletAddress
+      ? (params) =>
+          buildPathPaymentXdr({
+            walletAddress: params.walletAddress || walletAddress,
+            fromAsset: params.fromAsset,
+            fromAmount: params.fromAmount,
+            toAsset: params.toAsset,
+            minReceived: params.minReceived,
+            routePath: params.routePath,
+            networkPassphrase: getNetworkPassphrase(walletAppNetwork),
+            horizonUrl: getHorizonUrl(walletAppNetwork),
+          })
+      : undefined,
     rollbackTarget: {
       setFromToken,
       setToToken,
@@ -371,16 +505,19 @@ export function SwapCard() {
       selectedRouteId: selectedRoute?.id ?? null,
     };
     setIsModalOpen(true);
+    const finalToAmount = selectedRoute?.expectedAmount
+      ? selectedRoute.expectedAmount.replace('≈ ', '')
+      : toAmount;
     optimistic.initiateSwap({
       fromAsset: fromToken,
       fromAmount,
       toAsset: toToken,
-      toAmount: selectedRoute?.expectedAmount ?? toAmount,
+      toAmount: finalToAmount,
       exchangeRate: formattedRate,
       priceImpact: quote.priceImpact.toString(),
-      minReceived: `${(parseFloat(toAmount || '0') * (1 - slippage / 100)).toFixed(4)} ${toSymbol}`,
+      minReceived: `${(parseFloat(finalToAmount || '0') * (1 - slippage / 100)).toFixed(4)} ${toSymbol}`,
       networkFee: quote.fee ? `${quote.fee.toFixed(5)} XLM` : '0.00001 XLM',
-      routePath: [],
+      routePath: selectedRoute?.rawPath ?? (quote.data?.path || []),
       walletAddress: walletAddress ?? '',
       snapshot: snap,
     });
@@ -395,6 +532,7 @@ export function SwapCard() {
     quote,
     toSymbol,
     optimistic,
+    walletAddress,
   ]);
 
   const handleSwap = useCallback(() => {
@@ -624,7 +762,10 @@ export function SwapCard() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => quote.refresh()}
+                onClick={() => {
+                  quote.refresh();
+                  routesState.refresh();
+                }}
                 disabled={quote.loading}
                 aria-label={t('swap.card.refreshQuote')}
                 className="h-9 w-9 rounded-xl hover:bg-muted/80"
@@ -728,8 +869,12 @@ export function SwapCard() {
               />
               <RouteDisplay
                 amountOut={selectedRoute?.expectedAmount ?? toAmount}
-                isLoading={quote.loading}
-                onSelect={setSelectedRoute}
+                isLoading={isRoutesLoading}
+                alternativeRoutes={mergedAlternativeRoutes}
+                onSelect={handleRouteSelect}
+                selectedRouteId={selectedRoute?.id ?? null}
+                fromAssetCode={fromSymbol}
+                toAssetCode={toSymbol}
               />
               {/* Share Quote Button */}
               <div className="flex justify-end">

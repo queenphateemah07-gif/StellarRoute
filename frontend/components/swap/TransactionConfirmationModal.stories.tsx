@@ -2,31 +2,60 @@ import type { Story } from '@ladle/react';
 import { useState } from 'react';
 import { TransactionConfirmationModal } from './TransactionConfirmationModal';
 import type { TransactionConfirmationModalProps } from './TransactionConfirmationModal';
+import type { TradeParams } from '@/hooks/useTransactionLifecycle';
 
 // ── Shared mock quote ────────────────────────────────────────────────────────
 
-const baseTradeParams = {
+const baseTradeParams: TradeParams = {
   fromAsset: 'XLM',
   toAsset: 'USDC',
   fromAmount: '500.00',
   toAmount: '52.47',
   minReceived: '52.21 USDC',
+  exchangeRate: '0.1049 XLM/USDC',
+  priceImpact: '0.05%',
+  networkFee: '0.0001 XLM',
+  routePath: [],
+  walletAddress: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
 };
 
-const splitRouteTradeParams = {
+const splitRouteTradeParams: TradeParams = {
   fromAsset: 'XLM',
   toAsset: 'BTC',
   fromAmount: '10000.00',
   toAmount: '0.01662',
   minReceived: '0.01645 BTC',
+  exchangeRate: '0.00000166 XLM/BTC',
+  priceImpact: '0.2%',
+  networkFee: '0.0002 XLM',
+  routePath: [
+    {
+      from_asset: { asset_type: 'native' },
+      to_asset: { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
+      price: '0.105',
+      source: 'sdex'
+    },
+    {
+      from_asset: { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
+      to_asset: { asset_type: 'credit_alphanum12', asset_code: 'BTC', asset_issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' },
+      price: '0.0000158',
+      source: 'amm:phoenix'
+    }
+  ],
+  walletAddress: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
 };
 
-const highSlippageTradeParams = {
+const highSlippageTradeParams: TradeParams = {
   fromAsset: 'XLM',
   toAsset: 'AQUA',
   fromAmount: '50000.00',
   toAmount: '1750000.00',
   minReceived: '1662500.00 AQUA',
+  exchangeRate: '35.0 XLM/AQUA',
+  priceImpact: '5.2%',
+  networkFee: '0.0001 XLM',
+  routePath: [],
+  walletAddress: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
 };
 
 // ── Shared no-op handlers ────────────────────────────────────────────────────

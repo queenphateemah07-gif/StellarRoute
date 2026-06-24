@@ -7,8 +7,9 @@ import { useWalletOnboarding } from '@/hooks/useWalletOnboarding';
 import { WalletConnectionOnboarding } from '@/components/modals/WalletConnectionOnboarding';
 import { AccountSwitcher } from './account-switcher';
 import { Button } from '@/components/ui/button';
+import { STELLAR_NETWORK } from '@/lib/constants';
 
-const APP_NETWORK = 'TESTNET';
+const APP_NETWORK = STELLAR_NETWORK;
 
 export function WalletButton() {
   const [showQrCode, setShowQrCode] = useState(false);

@@ -119,14 +119,22 @@ describe("RouteDisplay", () => {
     expect(screen.getByText("0.00003 XLM")).toBeInTheDocument();
   });
 
-  it("instantly transitions from skeleton to content", () => {
+  it("progressively transitions from skeleton to content", () => {
+    vi.useFakeTimers();
+
     const { rerender } = render(<RouteDisplay amountOut="50.0" isLoading={true} />);
 
     expect(document.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
 
     rerender(<RouteDisplay amountOut="50.0" isLoading={false} />);
 
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
     expect(document.querySelectorAll(".animate-pulse").length).toBe(0);
     expect(screen.getByText("Best Route")).toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 });

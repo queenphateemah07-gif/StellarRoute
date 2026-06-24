@@ -1,8 +1,10 @@
-export type FeatureFlagName = "routesBeta" | "batchSwaps";
+export type FeatureFlagName = "routesBeta" | "batchSwaps" | "realXdr";
 
 export interface FeatureFlags {
   routesBeta: boolean;
   batchSwaps: boolean;
+  /** Build and submit real Stellar path-payment XDR (behind testnet integration flag) */
+  realXdr: boolean;
 }
 
 type PartialFeatureFlags = Partial<FeatureFlags>;
@@ -16,11 +18,13 @@ declare global {
 const DEFAULT_FLAGS: FeatureFlags = {
   routesBeta: false,
   batchSwaps: false,
+  realXdr: false,
 };
 
 const ENV_FLAG_MAP: Record<FeatureFlagName, string> = {
   routesBeta: "NEXT_PUBLIC_FEATURE_ROUTES_BETA",
   batchSwaps: "NEXT_PUBLIC_FEATURE_BATCH_SWAPS",
+  realXdr: "NEXT_PUBLIC_FEATURE_REAL_XDR",
 };
 
 function parseBooleanFlag(value: string | undefined): boolean | undefined {
@@ -42,10 +46,12 @@ function parseBooleanFlag(value: string | undefined): boolean | undefined {
 function getEnvFlags(): PartialFeatureFlags {
   const routesBeta = parseBooleanFlag(process.env[ENV_FLAG_MAP.routesBeta]);
   const batchSwaps = parseBooleanFlag(process.env[ENV_FLAG_MAP.batchSwaps]);
+  const realXdr = parseBooleanFlag(process.env[ENV_FLAG_MAP.realXdr]);
 
   const flags: PartialFeatureFlags = {};
   if (routesBeta !== undefined) flags.routesBeta = routesBeta;
   if (batchSwaps !== undefined) flags.batchSwaps = batchSwaps;
+  if (realXdr !== undefined) flags.realXdr = realXdr;
 
   return flags;
 }
