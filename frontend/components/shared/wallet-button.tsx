@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useWallet } from '@/components/providers/wallet-provider';
 import { useWalletOnboarding } from '@/hooks/useWalletOnboarding';
@@ -17,15 +17,35 @@ export function WalletButton() {
   const [walletNetworkForOnboarding, setWalletNetworkForOnboarding] = useState<string | null>(null);
 
   const {
-    session,
+    address,
+    isConnected,
+    network,
     availableWallets,
-    loading,
+    isLoading: loading,
     error,
-    shortAddress,
     connect,
     disconnect,
-    copyAddress,
   } = useWallet();
+
+  const session = useMemo(() => ({
+    address,
+    isConnected,
+    network,
+  }), [address, isConnected, network]);
+
+  const shortAddress = useMemo(() => {
+    if (!address) return '';
+    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  }, [address]);
+
+  const copyAddress = async () => {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+    } catch (err) {
+      console.error('Failed to copy address:', err);
+    }
+  };
 
   const {
     showOnboarding,
@@ -74,7 +94,7 @@ export function WalletButton() {
           onOpenChange={setShowOnboardingModal}
           availableWallets={availableWallets}
           isLoading={loading}
-          error={error}
+          error={error ? error.message : null}
           onConnect={handleOnboardingConnect}
           walletNetwork={walletNetworkForOnboarding}
         />
@@ -156,7 +176,7 @@ export function WalletButton() {
         </div>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error.message}</p>}
     </div>
   );
 }
