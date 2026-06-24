@@ -136,11 +136,8 @@ export function RouteDisplay({
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const routes = alternativeRoutes ?? buildAlternativeRoutes(amountOut);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const { animateInClass } = useRouteSwitchTransition(
-    routeKey ?? selectedRouteId ?? undefined
-  );
-  const { showSkeleton, contentClassName } =
-    useProgressiveLoadingTransition(isLoading);
+  const { animateInClass } = useRouteSwitchTransition(routeKey ?? selectedRouteId ?? undefined);
+  const { showSkeleton, contentClassName } = useProgressiveLoadingTransition(isLoading);
 
   const handleSelect = (route: AlternativeRoute) => {
     setSelectedRouteId(route.id);
