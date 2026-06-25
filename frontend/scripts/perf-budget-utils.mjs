@@ -481,11 +481,18 @@ export function parseBundleSize(buildDir) {
     }
   }
 
-  const swapChunks = collectSwapChunkPaths(
+  let swapChunks = collectSwapChunkPaths(
     buildDir,
     buildManifest,
     appBuildManifest,
   );
+
+  if (swapChunks.size === 0) {
+    const appRouterChunks = collectAppRouterSwapChunks(buildDir);
+    if (appRouterChunks?.size) {
+      swapChunks = appRouterChunks;
+    }
+  }
 
   if (swapChunks.size === 0) {
     const available = [
@@ -498,31 +505,7 @@ export function parseBundleSize(buildDir) {
     process.exit(1);
   }
 
-  let totalBytes = 0;
-  const asyncChunks = [];
-  
-  for (const chunk of swapChunks) {
-    if (!chunk.endsWith(".js")) continue;
-    
-    const relativePath = chunk.startsWith("_next/")
-      ? chunk.slice("_next/".length)
-      : chunk;
-    const filePath = path.join(buildDir, relativePath);
-
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
-
-  const appRouterChunks = collectAppRouterSwapChunks(buildDir);
-  if (appRouterChunks?.size) {
-    return summarizeChunks(buildDir, appRouterChunks);
-  }
-
-  const available = Object.keys(pages).join(", ");
-  console.error(
-    `[perf-budget] ERROR: Route "/swap" not found in build manifest. Available routes: ${available}`
-  );
-  process.exit(1);
+  return summarizeChunks(buildDir, swapChunks);
 }
 
 // ---------------------------------------------------------------------------
