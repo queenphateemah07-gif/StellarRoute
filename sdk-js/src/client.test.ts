@@ -225,6 +225,97 @@ describe('getRoutes', () => {
   });
 });
 
+// ── getRankedRoutes ─────────────────────────────────────────────────────────
+
+describe('getRankedRoutes', () => {
+  const sampleRankedRoutes = {
+    base_asset: NATIVE,
+    quote_asset: USDC,
+    amount: '100',
+    routes: [
+      {
+        estimated_output: '10.5000000',
+        impact_bps: 12,
+        score: 0.95,
+        policy_used: 'production',
+        path: [
+          {
+            from_asset: NATIVE,
+            to_asset: USDC,
+            price: '0.1050000',
+            amount_out_of_hop: '10.5000000',
+            fee_bps: 30,
+            source: 'sdex',
+          },
+        ],
+      },
+      {
+        estimated_output: '10.4000000',
+        impact_bps: 25,
+        score: 0.88,
+        policy_used: 'production',
+        path: [
+          {
+            from_asset: NATIVE,
+            to_asset: USDC,
+            price: '0.1040000',
+            amount_out_of_hop: '10.4000000',
+            fee_bps: 30,
+            source: 'amm:pool1',
+          },
+        ],
+      },
+    ],
+    timestamp: Date.now(),
+  };
+
+  it('returns typed RankedRoutesResponse on 200', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleRankedRoutes));
+    const result = await new StellarRouteClient().getRankedRoutes('native', 'USDC', 100);
+    expect(result.routes).toHaveLength(2);
+    expect(result.routes[0]?.score).toBe(0.95);
+    expect(result.routes[0]?.estimated_output).toBe('10.5000000');
+    expect(result.routes[0]?.path[0]?.source).toBe('sdex');
+    expect(result.amount).toBe('100');
+  });
+
+  it('calls the correct /api/v1/routes endpoint', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleRankedRoutes));
+    await new StellarRouteClient().getRankedRoutes('native', 'USDC', 100);
+    const url = new URL(spy.mock.calls[0]?.[0] as string);
+    expect(url.pathname).toBe('/api/v1/routes/native/USDC');
+    expect(url.searchParams.get('amount')).toBe('100');
+  });
+
+  it('appends limit and max_hops query params when provided', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleRankedRoutes));
+    await new StellarRouteClient().getRankedRoutes('native', 'USDC', 100, 10, 4);
+    const url = new URL(spy.mock.calls[0]?.[0] as string);
+    expect(url.searchParams.get('limit')).toBe('10');
+    expect(url.searchParams.get('max_hops')).toBe('4');
+  });
+
+  it('omits optional params when not provided', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleRankedRoutes));
+    await new StellarRouteClient().getRankedRoutes('native', 'USDC');
+    const url = new URL(spy.mock.calls[0]?.[0] as string);
+    expect(url.searchParams.has('amount')).toBe(false);
+    expect(url.searchParams.has('limit')).toBe(false);
+    expect(url.searchParams.has('max_hops')).toBe(false);
+  });
+
+  it('URL-encodes asset identifiers with colons', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleRankedRoutes));
+    await new StellarRouteClient().getRankedRoutes('native', 'USDC:GDUKMGUGDZQK6YH...', 100);
+    expect(spy.mock.calls[0]?.[0]).toContain('USDC%3AGDUKMGUGDZQK6YH');
+  });
+
+  it('throws StellarRouteApiError on 404', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      apiError('not_found', 'No route found', 404),
+    );
+    const err = await new StellarRouteClient({ retries: 0 })
+      .getRankedRoutes('native', 'GHOST')
 // ── getPriceHistory ─────────────────────────────────────────────────────────
 
 describe('getPriceHistory', () => {

@@ -11,6 +11,7 @@ import type {
   BatchQuoteResponse,
   QuoteStalenessConfig,
   QuoteType,
+  RankedRoutesResponse,
   RouteResponse,
 } from './types.js';
 import { DEFAULT_STALENESS_CONFIG, isQuoteStale, isQuoteExpired } from './types.js';
@@ -261,6 +262,10 @@ export class StellarRouteClient {
   /**
    * `GET /api/v1/route/{base}/{quote}` — get optimal trading route.
    *
+   * @deprecated Use {@link getRankedRoutes} instead, which calls the ranked
+   *   `/api/v1/routes` endpoint and returns richer candidate data including
+   *   scores, feasibility fields, and multiple route options.
+   *
    * @param base   Base asset identifier.
    * @param quote  Quote asset identifier.
    * @param amount Amount of the base asset to trade.
@@ -284,6 +289,39 @@ export class StellarRouteClient {
     const path = `/api/v1/route/${encodeURIComponent(base)}/${encodeURIComponent(quote)}?${params}`;
     const response = await this.request<RouteResponse>(path, signal);
     return response.path;
+  }
+
+  /**
+   * `GET /api/v1/routes/{base}/{quote}` — get ranked trading route candidates.
+   *
+   * Returns multiple ranked routes with composite scores, price impact, and
+   * per-hop metadata. Routes are sorted by score (higher is better).
+   *
+   * @param base    Base asset identifier: `"native"`, `"CODE"`, or `"CODE:ISSUER"`.
+   * @param quote   Quote asset identifier.
+   * @param amount  Amount of the base asset to trade. Defaults to `"1"`.
+   * @param limit   Maximum number of routes to return (1–20, default 5).
+   * @param maxHops Maximum hops per route (1–6, default 3).
+   *
+   * @throws {@link StellarRouteApiError} with `status === 404` when no route exists.
+   * @throws {@link StellarRouteApiError} with `status === 400` for invalid params.
+   */
+  async getRankedRoutes(
+    base: string,
+    quote: string,
+    amount?: number,
+    limit?: number,
+    maxHops?: number,
+    signal?: AbortSignal,
+  ): Promise<RankedRoutesResponse> {
+    const params = new URLSearchParams();
+    if (amount !== undefined) params.set('amount', String(amount));
+    if (limit !== undefined) params.set('limit', String(limit));
+    if (maxHops !== undefined) params.set('max_hops', String(maxHops));
+
+    const qs = params.toString();
+    const path = `/api/v1/routes/${encodeURIComponent(base)}/${encodeURIComponent(quote)}${qs ? `?${qs}` : ''}`;
+    return this.request<RankedRoutesResponse>(path, signal);
   }
 
   /**
