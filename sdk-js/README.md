@@ -26,20 +26,22 @@ const quote = await client.getQuote(
 console.log(quote.price, quote.total);
 ```
 
-### Get route steps
+### Get ranked routes
 
 ```ts
 import { StellarRouteClient } from '@stellarroute/sdk-js';
 
 const client = new StellarRouteClient('http://localhost:8080');
-const routes = await client.getRoutes(
+const result = await client.getRankedRoutes(
   'native',
   'USDC:GDUKMGUGDZQK6YH...',
   100,
+  5, // limit
 );
 
-routes.forEach((step) => {
-  console.log(step.source, step.price);
+result.routes.forEach((route) => {
+  console.log(`score=${route.score} output=${route.estimated_output}`);
+  route.path.forEach((hop) => console.log(`  ${hop.source}: ${hop.price}`));
 });
 ```
 
