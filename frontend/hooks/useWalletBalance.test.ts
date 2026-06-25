@@ -1,25 +1,16 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { useWalletBalance } from './useWalletBalance';
-import { XLM_FEE_RESERVE } from '@/lib/stellar-reserves';
-
-const TEST_ADDRESS = 'GABC123DEFGHIJKLMNOPQRSTUVWXYZ456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-
-function mockHorizonAccount(balances: unknown[]) {
-  return vi.fn((url: string) => {
-    if (url.includes('/accounts/')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ balances }),
-      });
-    }
-    return Promise.reject(new Error(`Unexpected fetch: ${url}`));
-  });
-}
 
 describe('useWalletBalance', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.spyOn(global, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ balances: [] }),
+      } as Response),
+    );
   });
 
   afterEach(() => {
