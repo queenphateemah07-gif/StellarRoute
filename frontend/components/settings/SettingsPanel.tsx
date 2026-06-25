@@ -41,7 +41,6 @@ export function SettingsPanel({
   onReset,
 }: SettingsPanelProps) {
   const { t } = useSwapI18n();
-
   return (
     <Popover>
       <PopoverTrigger asChild>
