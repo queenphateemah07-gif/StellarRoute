@@ -13,6 +13,8 @@ import type {
   QuoteType,
   RankedRoutesResponse,
   RouteResponse,
+  SimulateRouteRequest,
+  SimulateRouteResponse,
 } from './types.js';
 import { DEFAULT_STALENESS_CONFIG, isQuoteStale, isQuoteExpired } from './types.js';
 

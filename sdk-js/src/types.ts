@@ -234,6 +234,86 @@ export interface RouteResponse {
   timestamp: number;
 }
 
+// ── Route simulation (dry-run) ───────────────────────────────────────────────
+
+/**
+ * A single hop in a route simulation dry-run request.
+ */
+export interface SimulationHop {
+  /** Source asset identifier: `"native"`, `"CODE"`, or `"CODE:ISSUER"`. */
+  from_asset: string;
+  /** Destination asset identifier. */
+  to_asset: string;
+  /** Liquidity source: `"sdex"` or `"amm:<pool_address>"`. */
+  source: string;
+  /** Fee in basis points for this hop. */
+  fee_bps?: number;
+  /** Optional price hint for diagnostics. */
+  price?: string;
+  /** Venue reference for slippage override lookup. */
+  venue_ref?: string;
+}
+
+/**
+ * Per-hop slippage override for simulation.
+ */
+export interface SimulationSlippageOverride {
+  /** Which venue to apply the override to. */
+  venue_ref: string;
+  /** Slippage tolerance in basis points. */
+  slippage_bps: number;
+}
+
+/**
+ * Request body for `POST /api/v1/simulate/route`.
+ */
+export interface SimulateRouteRequest {
+  /** Route to simulate, containing execution-order hops. */
+  route: { hops: SimulationHop[] };
+  /** Input amount for the simulation. */
+  amount: string;
+  /** Default slippage tolerance in basis points (default: 50). */
+  slippage_bps?: number;
+  /** Per-hop slippage overrides applied by venue_ref. */
+  slippage_bps_overrides?: SimulationSlippageOverride[];
+}
+
+/**
+ * Reason a venue was excluded during simulation.
+ */
+export type ExclusionReason =
+  | 'policy_threshold'
+  | 'override'
+  | 'stale_data'
+  | 'circuit_breaker_open'
+  | 'liquidity_anomaly'
+  | (string & Record<never, never>);
+
+/**
+ * Information about an excluded venue.
+ */
+export interface ExcludedVenueInfo {
+  venue_ref: string;
+  reason: ExclusionReason;
+}
+
+/**
+ * Diagnostics about venues excluded during simulation.
+ */
+export interface ExclusionDiagnostics {
+  excluded_venues: ExcludedVenueInfo[];
+}
+
+/**
+ * Response from `POST /api/v1/simulate/route`.
+ */
+export interface SimulateRouteResponse {
+  /** The simulated quote with full path and pricing details. */
+  quote: PriceQuote;
+  /** Optional diagnostics about venues excluded during simulation. */
+  exclusion_diagnostics?: ExclusionDiagnostics;
+}
+
 /**
  * A single hop within a ranked route candidate.
  */
