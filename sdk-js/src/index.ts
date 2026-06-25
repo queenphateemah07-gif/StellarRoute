@@ -34,6 +34,9 @@ export type {
   ApiError,
   ApiErrorCode,
   Asset,
+  ExcludedVenueInfo,
+  ExclusionDiagnostics,
+  ExclusionReason,
   HealthStatus,
   Orderbook,
   OrderbookEntry,
@@ -42,6 +45,10 @@ export type {
   PriceQuote,
   QuoteStalenessConfig,
   QuoteType,
+  SimulateRouteRequest,
+  SimulateRouteResponse,
+  SimulationHop,
+  SimulationSlippageOverride,
   TradingPair,
 } from './types.js';
 

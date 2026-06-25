@@ -10,6 +10,8 @@ import type {
   QuoteStalenessConfig,
   QuoteType,
   RouteResponse,
+  SimulateRouteRequest,
+  SimulateRouteResponse,
 } from './types.js';
 import { DEFAULT_STALENESS_CONFIG, isQuoteStale, isQuoteExpired } from './types.js';
 
@@ -302,6 +304,31 @@ export class StellarRouteClient {
       this.retries,
       'POST',
       requests,
+    );
+  }
+
+  /**
+   * `POST /api/v1/simulate/route` — dry-run a pre-selected hop chain for diagnostics.
+   *
+   * Simulates execution of the given route without any on-chain interaction.
+   * Returns the accumulated quote and optional exclusion diagnostics.
+   *
+   * @param request Simulation request with hops, amount, and optional slippage overrides.
+   *
+   * @throws {@link StellarRouteApiError} with `status === 400` for invalid params
+   *   (e.g. non-contiguous hops).
+   * @throws {@link StellarRouteApiError} with `status === 404` when no route exists.
+   */
+  async simulateRoute(
+    request: SimulateRouteRequest,
+    signal?: AbortSignal,
+  ): Promise<SimulateRouteResponse> {
+    return this.request<SimulateRouteResponse>(
+      '/api/v1/simulate/route',
+      signal,
+      this.retries,
+      'POST',
+      request,
     );
   }
 

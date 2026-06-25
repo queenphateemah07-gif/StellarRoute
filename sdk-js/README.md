@@ -43,6 +43,30 @@ routes.forEach((step) => {
 });
 ```
 
+### Simulate a route (dry-run)
+
+```ts
+import { StellarRouteClient } from '@stellarroute/sdk-js';
+
+const client = new StellarRouteClient('http://localhost:8080');
+const result = await client.simulateRoute({
+  route: {
+    hops: [
+      { from_asset: 'native', to_asset: 'USDC:GDUKMGUGDZQK6YH...', source: 'sdex' },
+    ],
+  },
+  amount: '100',
+  slippage_bps: 50,
+});
+
+console.log(result.quote.total);
+if (result.exclusion_diagnostics) {
+  result.exclusion_diagnostics.excluded_venues.forEach((v) => {
+    console.log(`excluded ${v.venue_ref}: ${v.reason}`);
+  });
+}
+```
+
 Additional runnable quickstart files are in `sdk-js/examples/`.
 
 ## API docs

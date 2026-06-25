@@ -225,6 +225,85 @@ describe('getRoutes', () => {
   });
 });
 
+// ── simulateRoute ───────────────────────────────────────────────────────────
+
+describe('simulateRoute', () => {
+  const sampleSimRequest = {
+    route: {
+      hops: [
+        {
+          from_asset: 'native',
+          to_asset: 'USDC:GDUKMGUGDZQK6YH...',
+          source: 'sdex',
+          fee_bps: 30,
+        },
+      ],
+    },
+    amount: '100',
+    slippage_bps: 50,
+  };
+
+  const sampleSimResponse = {
+    quote: sampleQuote,
+    exclusion_diagnostics: {
+      excluded_venues: [
+        { venue_ref: 'amm:pool1', reason: 'stale_data' },
+      ],
+    },
+  };
+
+  it('POSTs JSON to /api/v1/simulate/route', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleSimResponse));
+    await new StellarRouteClient().simulateRoute(sampleSimRequest);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8080/api/v1/simulate/route');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual(sampleSimRequest);
+  });
+
+  it('returns typed SimulateRouteResponse on 200', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(sampleSimResponse));
+    const result = await new StellarRouteClient().simulateRoute(sampleSimRequest);
+    expect(result.quote.price).toBe('0.99');
+    expect(result.exclusion_diagnostics?.excluded_venues).toHaveLength(1);
+    expect(result.exclusion_diagnostics?.excluded_venues[0]?.reason).toBe('stale_data');
+  });
+
+  it('handles response without exclusion_diagnostics', async () => {
+    const responseNoDiag = { quote: sampleQuote };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(ok(responseNoDiag));
+    const result = await new StellarRouteClient().simulateRoute(sampleSimRequest);
+    expect(result.quote.price).toBe('0.99');
+    expect(result.exclusion_diagnostics).toBeUndefined();
+  });
+
+  it('maps validation error for non-contiguous hops', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      apiError('validation_error', 'Hops are not contiguous', 400),
+    );
+    const err = await new StellarRouteClient({ retries: 0 })
+      .simulateRoute(sampleSimRequest)
+      .catch((e: unknown) => e);
+
+    expect(isStellarRouteApiError(err)).toBe(true);
+    expect((err as StellarRouteApiError).isValidationError()).toBe(true);
+    expect((err as StellarRouteApiError).status).toBe(400);
+  });
+
+  it('maps 404 to isNotFound()', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      apiError('not_found', 'No route found', 404),
+    );
+    const err = await new StellarRouteClient({ retries: 0 })
+      .simulateRoute(sampleSimRequest)
+      .catch((e: unknown) => e);
+
+    expect(isStellarRouteApiError(err)).toBe(true);
+    expect((err as StellarRouteApiError).isNotFound()).toBe(true);
+  });
+});
+
 // ── Error handling ────────────────────────────────────────────────────────────
 
 describe('error handling', () => {
