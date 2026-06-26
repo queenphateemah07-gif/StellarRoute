@@ -9,6 +9,8 @@ import type {
   PriceQuote,
   QuoteRequestItem,
   BatchQuoteResponse,
+  OrderbookRequestItem,
+  BatchOrderbookResponse,
   QuoteStalenessConfig,
   QuoteType,
   RankedRoutesResponse,
