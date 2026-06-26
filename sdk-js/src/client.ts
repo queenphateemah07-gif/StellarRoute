@@ -4,6 +4,8 @@ import type {
   Orderbook,
   PairsResponse,
   PathStep,
+  PriceHistoryResponse,
+  PriceHistoryWindow,
   PriceQuote,
   QuoteRequestItem,
   BatchQuoteResponse,
@@ -11,7 +13,10 @@ import type {
   BatchOrderbookResponse,
   QuoteStalenessConfig,
   QuoteType,
+  RankedRoutesResponse,
   RouteResponse,
+  SimulateRouteRequest,
+  SimulateRouteResponse,
 } from './types.js';
 import { DEFAULT_STALENESS_CONFIG, isQuoteStale, isQuoteExpired } from './types.js';
 
@@ -261,6 +266,10 @@ export class StellarRouteClient {
   /**
    * `GET /api/v1/route/{base}/{quote}` — get optimal trading route.
    *
+   * @deprecated Use {@link getRankedRoutes} instead, which calls the ranked
+   *   `/api/v1/routes` endpoint and returns richer candidate data including
+   *   scores, feasibility fields, and multiple route options.
+   *
    * @param base   Base asset identifier.
    * @param quote  Quote asset identifier.
    * @param amount Amount of the base asset to trade.
@@ -287,6 +296,39 @@ export class StellarRouteClient {
   }
 
   /**
+   * `GET /api/v1/routes/{base}/{quote}` — get ranked trading route candidates.
+   *
+   * Returns multiple ranked routes with composite scores, price impact, and
+   * per-hop metadata. Routes are sorted by score (higher is better).
+   *
+   * @param base    Base asset identifier: `"native"`, `"CODE"`, or `"CODE:ISSUER"`.
+   * @param quote   Quote asset identifier.
+   * @param amount  Amount of the base asset to trade. Defaults to `"1"`.
+   * @param limit   Maximum number of routes to return (1–20, default 5).
+   * @param maxHops Maximum hops per route (1–6, default 3).
+   *
+   * @throws {@link StellarRouteApiError} with `status === 404` when no route exists.
+   * @throws {@link StellarRouteApiError} with `status === 400` for invalid params.
+   */
+  async getRankedRoutes(
+    base: string,
+    quote: string,
+    amount?: number,
+    limit?: number,
+    maxHops?: number,
+    signal?: AbortSignal,
+  ): Promise<RankedRoutesResponse> {
+    const params = new URLSearchParams();
+    if (amount !== undefined) params.set('amount', String(amount));
+    if (limit !== undefined) params.set('limit', String(limit));
+    if (maxHops !== undefined) params.set('max_hops', String(maxHops));
+
+    const qs = params.toString();
+    const path = `/api/v1/routes/${encodeURIComponent(base)}/${encodeURIComponent(quote)}${qs ? `?${qs}` : ''}`;
+    return this.request<RankedRoutesResponse>(path, signal);
+  }
+
+  /**
    * `POST /api/v1/batch/quote` — fetch multiple price quotes in a single request.
    *
    * @param requests Array of quote requests to fetch.
@@ -308,26 +350,25 @@ export class StellarRouteClient {
   }
 
   /**
-   * `POST /api/v1/batch/orderbook` — fetch multiple orderbook snapshots in a
-   * single request. Per-item failures are reported in each result's `status`
-   * field and do not abort the batch.
+   * `GET /api/v1/price-history/{base}/{quote}` — fetch price history for charting/sparklines.
    *
-   * @param requests Array of base/quote pairs to fetch (1–25).
+   * @param base  Base asset identifier: `"native"`, `"CODE"`, or `"CODE:ISSUER"`.
+   * @param quote Quote asset identifier.
+   * @param options Optional parameters: `window` for the time range.
    *
-   * @throws {@link StellarRouteApiError} when the batch request itself fails.
+   * @throws {@link StellarRouteApiError} with `status === 404` when the pair is not found.
    */
-  async getOrderbooksBatch(
-    requests: OrderbookRequestItem[],
-    signal?: AbortSignal,
-  ): Promise<BatchOrderbookResponse> {
-    const path = '/api/v1/batch/orderbook';
-    return this.request<BatchOrderbookResponse>(
-      path,
-      signal,
-      this.retries,
-      'POST',
-      { requests },
-    );
+  getPriceHistory(
+    base: string,
+    quote: string,
+    options?: { window?: PriceHistoryWindow; signal?: AbortSignal },
+  ): Promise<PriceHistoryResponse> {
+    const params = new URLSearchParams();
+    if (options?.window !== undefined) params.set('window', options.window);
+
+    const qs = params.toString();
+    const path = `/api/v1/price-history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}${qs ? `?${qs}` : ''}`;
+    return this.request<PriceHistoryResponse>(path, options?.signal);
   }
 
   // ── Internal helpers ────────────────────────────────────────────────────────
