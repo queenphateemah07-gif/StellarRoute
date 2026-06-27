@@ -51,6 +51,11 @@ interface UseFetchOptions {
   showToastOnError?: boolean;
 }
 
+interface UseRoutesOptions {
+  refreshIntervalMs?: number;
+  showToastOnError?: boolean;
+}
+
 function useFetch<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   deps: unknown[],
@@ -235,17 +240,25 @@ export function useRoutes(
   quote: string,
   amount?: number,
   limit = 5,
-  maxHops = 3
+  maxHops = 3,
+  options: UseRoutesOptions = {}
 ): UseApiState<RoutesResponse> & { refresh: () => void } {
   const debouncedAmount = useDebounced(amount, QUOTE_AMOUNT_DEBOUNCE_MS);
-  const skip = !base || !quote;
+  const invalidAmount =
+    debouncedAmount !== undefined &&
+    (!Number.isFinite(debouncedAmount) || debouncedAmount <= 0);
+  const skip = !base || !quote || invalidAmount;
   return useFetch(
     (signal) =>
       stellarRouteClient.getRoutes(base, quote, debouncedAmount, limit, maxHops, {
         signal,
       }),
     [base, quote, debouncedAmount, limit, maxHops],
-    { skip },
+    {
+      skip,
+      refreshIntervalMs: options.refreshIntervalMs,
+      showToastOnError: options.showToastOnError,
+    },
   );
 }
 

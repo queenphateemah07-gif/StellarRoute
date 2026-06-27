@@ -12,6 +12,7 @@ import type {
   ApiResponse,
   HealthStatus,
   Orderbook,
+  PriceHistoryWindow,
   PriceHistoryResponse,
   PairsResponse,
   PriceQuote,
@@ -472,9 +473,14 @@ export class StellarRouteClient {
   getPriceHistory(
     base: string,
     quote: string,
-    opts?: FetchOptions,
+    opts?: FetchOptions & { window?: PriceHistoryWindow },
   ): Promise<PriceHistoryResponse> {
-    const path = `/api/v1/price-history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}`;
+    const params = new URLSearchParams();
+    if (opts?.window !== undefined) {
+      params.set('window', opts.window);
+    }
+    const qs = params.toString();
+    const path = `/api/v1/price-history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}${qs ? `?${qs}` : ''}`;
     return this.request<PriceHistoryResponse>(path, opts);
   }
 
