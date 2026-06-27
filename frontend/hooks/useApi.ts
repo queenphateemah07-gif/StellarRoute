@@ -13,7 +13,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { toast } from 'sonner';
 
-import { StellarRouteApiError, stellarRouteClient } from '@/lib/api/client';
+import {
+  StellarRouteApiError,
+  stellarRouteClient,
+  STATUS_PAGE_REFRESH_MS,
+} from '@/lib/api/client';
+import type { DepsHealthStatus } from '@/lib/api/client';
 import { QUOTE_AMOUNT_DEBOUNCE_MS } from '@/lib/quote-stale';
 import type {
   HealthStatus,
@@ -232,14 +237,15 @@ export function useRoutes(
   limit = 5,
   maxHops = 3
 ): UseApiState<RoutesResponse> & { refresh: () => void } {
+  const debouncedAmount = useDebounced(amount, QUOTE_AMOUNT_DEBOUNCE_MS);
   const skip = !base || !quote;
   return useFetch(
     (signal) =>
-      stellarRouteClient.getRoutes(base, quote, amount, limit, maxHops, {
+      stellarRouteClient.getRoutes(base, quote, debouncedAmount, limit, maxHops, {
         signal,
       }),
-    [base, quote, amount, limit, maxHops],
-    { skip }
+    [base, quote, debouncedAmount, limit, maxHops],
+    { skip },
   );
 }
 
@@ -314,11 +320,25 @@ export function useBatchQuote(
 // ---------------------------------------------------------------------------
 
 export function useHealth(
-  refreshIntervalMs = 60_000
+  refreshIntervalMs = STATUS_PAGE_REFRESH_MS,
 ): UseApiState<HealthStatus> & { refresh: () => void } {
   return useFetch((signal) => stellarRouteClient.getHealth({ signal }), [], {
     refreshIntervalMs,
   });
+}
+
+// ---------------------------------------------------------------------------
+// useHealthDeps — external dependency health status
+// ---------------------------------------------------------------------------
+
+export function useHealthDeps(
+  refreshIntervalMs = STATUS_PAGE_REFRESH_MS,
+): UseApiState<DepsHealthStatus> & { refresh: () => void } {
+  return useFetch(
+    (signal) => stellarRouteClient.getDepsHealth({ signal }),
+    [],
+    { refreshIntervalMs },
+  );
 }
 
 // ---------------------------------------------------------------------------
