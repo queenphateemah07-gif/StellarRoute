@@ -458,10 +458,12 @@ describe('getApiRoot', () => {
     expect(getApiRoot()).toBe('http://localhost:8080');
   });
 
-  it('returns empty string in proxy mode regardless of NEXT_PUBLIC_API_URL', () => {
+  it('returns empty string in proxy mode regardless of NEXT_PUBLIC_API_URL', async () => {
+    vi.resetModules();
     process.env.NEXT_PUBLIC_API_PROXY = 'true';
     process.env.NEXT_PUBLIC_API_URL = 'https://api.stellarroute.xyz';
-    expect(getApiRoot()).toBe('');
+    const { getApiRoot: getApiRootFresh } = await import('@/lib/constants');
+    expect(getApiRootFresh()).toBe('');
   });
 
   it('preview URL with subdomain works correctly', () => {
