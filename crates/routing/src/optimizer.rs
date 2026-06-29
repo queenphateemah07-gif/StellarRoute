@@ -297,9 +297,9 @@ impl HybridOptimizer {
 
         // Convert compacted graph back to edges for pathfinding
         let edges = graph.to_edges();
-        let paths =
-            self.pathfinder
-                .find_paths(from, to, &edges, amount_in, routing_policy)?;
+        let paths = self
+            .pathfinder
+            .find_paths(from, to, &edges, amount_in, routing_policy)?;
 
         if paths.is_empty() {
             return Err(RoutingError::NoRoute(from.to_string(), to.to_string()));
@@ -613,8 +613,6 @@ mod tests {
             liquidity: 10_000_000,
             price: 0.1,
             fee_bps: 30,
-            anomaly_score: 0.0,
-            anomaly_reasons: vec![],
         }];
         let policy = RoutingPolicy::default();
         let result = optimizer.find_optimal_routes("XLM", "USDC", &edges, 1_000_000, &policy);
@@ -636,8 +634,6 @@ mod tests {
                 venue_ref: "pool1".to_string(),
                 price: 0.1,
                 fee_bps: 30,
-                anomaly_score: 0.0,
-                anomaly_reasons: vec![],
             }],
             estimated_output: 900_000,
         }];

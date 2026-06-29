@@ -2,7 +2,7 @@
 
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
-use stellarroute_api::{state::DatabasePools, telemetry, Server, ServerConfig, PurgerConfig};
+use stellarroute_api::{state::DatabasePools, telemetry, PurgerConfig, Server, ServerConfig};
 use tracing::{error, info};
 
 fn parse_bool_env(name: &str) -> bool {
@@ -222,6 +222,7 @@ async fn main() {
             .unwrap_or(3000),
         enable_cors: true,
         enable_compression: true,
+        admin_auth_token: std::env::var("ADMIN_AUTH_TOKEN").ok(),
         redis_url,
         quote_cache_ttl_seconds: std::env::var("QUOTE_CACHE_TTL_SECONDS")
             .ok()

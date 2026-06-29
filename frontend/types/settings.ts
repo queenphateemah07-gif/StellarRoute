@@ -21,6 +21,10 @@ export interface Settings {
   locale: Locale;
   slippageProfiles: SlippageProfile[];
   activeProfileId: string;
+  accentColor: AccentColor;
+  fontScale: FontScale;
+  /** Accessibility high contrast mode. */
+  highContrast: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,4 +33,23 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: DEFAULT_LOCALE,
   slippageProfiles: PRESET_SLIPPAGE_PROFILES,
   activeProfileId: 'balanced',
+  accentColor: 'indigo',
+  fontScale: 1,
+  highContrast: false,
 };
+
+export type AccentColor = 'indigo' | 'zinc' | 'rose' | 'amber' | 'emerald' | 'cyan' | 'violet';
+
+export const ACCENT_COLORS: Record<AccentColor, string> = {
+  indigo: '#6366f1',
+  zinc: '#71717a',
+  rose: '#f43f5e',
+  amber: '#f59e0b',
+  emerald: '#10b981',
+  cyan: '#06b6d4',
+  violet: '#8b5cf6',
+};
+
+export type FontScale = 1 | 1.25 | 1.5 | 1.75 | 2;
+
+export const FONT_SCALE_OPTIONS: FontScale[] = [1, 1.25, 1.5, 1.75, 2];

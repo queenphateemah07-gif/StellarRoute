@@ -86,8 +86,8 @@ impl DiffEngine {
             .and_then(|r| r.get("compared_venues"))
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let replay_compared = serde_json::to_value(&replay.compared_venues)
-            .unwrap_or(serde_json::Value::Null);
+        let replay_compared =
+            serde_json::to_value(&replay.compared_venues).unwrap_or(serde_json::Value::Null);
         if orig_compared != serde_json::Value::Null && orig_compared != replay_compared {
             divergences.push(FieldDivergence {
                 field: "rationale.compared_venues".to_string(),
@@ -206,6 +206,8 @@ mod tests {
                 to_asset: AssetInfo::native(),
                 price: price.to_string(),
                 source: source.to_string(),
+                fee_bps: None,
+                liquidity_depth: None,
             }],
             compared_venues: vec![],
             is_deterministic: true,

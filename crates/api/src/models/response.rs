@@ -73,6 +73,18 @@ pub struct CacheMetricsResponse {
     pub stale_inputs_excluded: u64,
 }
 
+/// Cache flush response for admin cache invalidation operations
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CacheFlushResponse {
+    pub base: String,
+    pub quote: String,
+    pub quote_pattern: String,
+    pub orderbook_pattern: String,
+    pub deleted_quote_keys: u64,
+    pub deleted_orderbook_keys: u64,
+    pub total_deleted: u64,
+}
+
 /// Trading pair information — matches GET /api/v1/pairs spec
 ///
 /// `base` / `counter` are human-readable codes (e.g. "XLM", "USDC").
@@ -374,6 +386,54 @@ impl BatchQuoteItemResult {
         Self {
             index,
             quote: None,
+            error: Some(error),
+            status: "error".to_string(),
+        }
+    }
+}
+
+/// Response for a batch orderbook request
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BatchOrderbookResponse {
+    /// Results in the same order as the request items.
+    pub results: Vec<BatchOrderbookItemResult>,
+    /// Number of items that succeeded.
+    pub items_succeeded: usize,
+    /// Number of items that failed (per-item errors, not a batch-level failure).
+    pub items_failed: usize,
+    /// Total items in the batch.
+    pub total: usize,
+}
+
+/// Result for a single item in a batch orderbook response.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BatchOrderbookItemResult {
+    /// Zero-based index of this item in the original request.
+    pub index: usize,
+    /// The orderbook, present when `status == "ok"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orderbook: Option<OrderbookResponse>,
+    /// Per-item error, present when `status == "error"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<BatchItemError>,
+    /// `"ok"` or `"error"`.
+    pub status: String,
+}
+
+impl BatchOrderbookItemResult {
+    pub fn ok(index: usize, orderbook: OrderbookResponse) -> Self {
+        Self {
+            index,
+            orderbook: Some(orderbook),
+            error: None,
+            status: "ok".to_string(),
+        }
+    }
+
+    pub fn err(index: usize, error: BatchItemError) -> Self {
+        Self {
+            index,
+            orderbook: None,
             error: Some(error),
             status: "error".to_string(),
         }
@@ -780,11 +840,18 @@ pub struct QuoteExpirationWebhookRegistrationResponse {
     pub consumer_id: String,
     pub webhook_url: String,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_signing_secret: Option<String>,
 }
 
 /// Quote expiration webhook payload
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct QuoteExpirationWebhookPayload {
+    pub event_id: String,
+    pub consumer_id: String,
+    pub pair: String,
+    pub reason: String,
+    pub expired_at: i64,
     pub event: String,
     pub timestamp: i64,
     pub quote_id: String,

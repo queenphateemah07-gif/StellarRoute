@@ -28,8 +28,18 @@ pub struct LiquidityEdge {
     pub venue_type: String,
     pub venue_ref: String,
     pub liquidity: i128,
+    #[serde(default)]
     pub price: f64,
+    #[serde(default = "default_fee_bps")]
     pub fee_bps: u32,
+    /// Score indicating routing irregularities or flash-loan anomalies
+    pub anomaly_score: Option<f64>,
+    /// Categorized structural anomalies or reasons for transaction flags
+    pub anomaly_reasons: Option<Vec<String>>,
+}
+
+fn default_fee_bps() -> u32 {
+    30
 }
 
 /// Represents a path through liquidity sources
@@ -39,7 +49,7 @@ pub struct SwapPath {
     pub estimated_output: i128,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PathHop {
     pub source_asset: String,
     pub destination_asset: String,
@@ -130,7 +140,10 @@ impl Pathfinder {
 
         // You could log diagnostics if needed (safe exposure)
         if !diagnostics.is_empty() {
-            tracing::debug!(excluded_routes = diagnostics.len(), "routes excluded by policy");
+            tracing::debug!(
+                excluded_routes = diagnostics.len(),
+                "routes excluded by policy"
+            );
         }
 
         if filtered_paths.is_empty() {
@@ -219,12 +232,7 @@ impl Pathfinder {
                     let mut new_hops = path_hops.clone();
                     new_hops.push(hop);
 
-                    queue.push_back((
-                        edge.to.clone(),
-                        new_hops,
-                        new_visited,
-                        estimated_after_hop,
-                    ));
+                    queue.push_back((edge.to.clone(), new_hops, new_visited, estimated_after_hop));
                 }
             }
         }

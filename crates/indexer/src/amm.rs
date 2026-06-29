@@ -4,7 +4,7 @@
 //! It polls registered pools from the router contract and updates the database with current state.
 
 use crate::db::Database;
-use crate::error::Result;
+use crate::error::{IndexerError, Result};
 use crate::models::{PoolReserve, PoolState};
 use crate::soroban::{SorobanRpc, SorobanRpcClient};
 use crate::telemetry::TraceContext;
@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde_json;
 use sqlx::Row;
 use std::time::Duration;
+use stellar_xdr::curr::{LedgerEntry, LedgerEntryData, Limits, ReadXdr, ScVal};
 use tracing::{debug, error, info, warn};
 
 const DISCOVERY_CURSOR_JOB: &str = "soroban_pool_discovery";
@@ -39,6 +40,9 @@ impl Default for AmmConfig {
         }
     }
 }
+
+const UPSERT_AMM_POOL_RESERVE_SQL: &str =
+    "SELECT upsert_amm_pool_reserve($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
 /// AMM pool aggregator service
 pub struct AmmAggregator {
@@ -109,8 +113,18 @@ impl AmmAggregator {
             }
 
             if !new_pools.is_empty() {
-                info!("Processing {} newly discovered/configured pools", new_pools.len());
+                info!(
+                    "Processing {} newly discovered/configured pools",
+                    new_pools.len()
+                );
                 self.process_pool_batch(&new_pools).await?;
+            }
+
+            let indexed_swaps = self
+                .index_swap_activity(start_ledger, current_ledger)
+                .await?;
+            if indexed_swaps > 0 {
+                info!("Indexed {} contract swap activity events", indexed_swaps);
             }
         }
 
@@ -125,7 +139,10 @@ impl AmmAggregator {
             }
         }
 
-        debug!("Processing {} existing/configured pools", existing_pools.len());
+        debug!(
+            "Processing {} existing/configured pools",
+            existing_pools.len()
+        );
         for batch in existing_pools.chunks(self.config.batch_size) {
             if let Err(e) = self.process_pool_batch(batch).await {
                 warn!("Failed to process pool batch: {}", e);
@@ -218,6 +235,23 @@ impl AmmAggregator {
         Ok(new_pools)
     }
 
+    async fn index_swap_activity(&self, start_ledger: u64, end_ledger: u64) -> Result<u64> {
+        use crate::soroban::EventFilter;
+
+        let filters = vec![EventFilter {
+            event_type: "contract".to_string(),
+            contract_ids: vec![self.config.router_contract.clone()],
+            topics: vec![vec!["swap".to_string()]],
+        }];
+
+        let events = self
+            .soroban
+            .get_events(start_ledger, Some(end_ledger), filters)
+            .await?;
+
+        crate::activity::ingest_swap_events(self.db.pool(), &events).await
+    }
+
     /// Get pools currently tracked in the database
     async fn get_tracked_pools(&self) -> Result<Vec<String>> {
         let rows = sqlx::query("SELECT pool_address FROM amm_pool_reserves")
@@ -299,23 +333,13 @@ impl AmmAggregator {
         self.parse_pool_state(&contract_data, pool_address)
     }
 
-    /// Parse pool state from contract data (simplified)
+    /// Parse pool state from contract data (XDR decoding)
     fn parse_pool_state(
         &self,
-        _contract_data: &serde_json::Value,
+        contract_data: &serde_json::Value,
         pool_address: &str,
     ) -> Result<PoolState> {
-        // TODO: Implement proper XDR decoding
-        // For now, return mock data
-        Ok(PoolState {
-            address: pool_address.to_string(),
-            token_a: "CDUMMYTOKENA".to_string(),
-            token_b: "CDUMMYTOKENB".to_string(),
-            reserve_a: 1000000000, // 1000 units
-            reserve_b: 2000000000, // 2000 units
-            fee_bps: 30,           // 0.3%
-            ledger_sequence: 12345,
-        })
+        parse_soroban_pool_state(contract_data, pool_address)
     }
 
     /// Resolve asset ID from contract address
@@ -354,7 +378,7 @@ impl AmmAggregator {
     async fn update_pool_reserve(&self, reserve: &PoolReserve) -> Result<()> {
         let pool = self.db.pool();
         let trace_context = TraceContext::current();
-        sqlx::query("SELECT upsert_amm_pool_reserve($1, $2, $3, $4, $5, $6, $7, $8, $9)")
+        sqlx::query(UPSERT_AMM_POOL_RESERVE_SQL)
             .bind(&reserve.pool_address)
             .bind(reserve.selling_asset_id)
             .bind(reserve.buying_asset_id)
@@ -386,5 +410,279 @@ impl AmmAggregator {
         }
 
         Ok(())
+    }
+}
+
+/// Helper to extract standard signed/unsigned integer values from ScVal
+fn parse_scval_integer(val: &ScVal) -> Option<i128> {
+    match val {
+        ScVal::I128(parts) => Some(((parts.hi as i128) << 64) | (parts.lo as i128)),
+        ScVal::U128(parts) => Some(((parts.hi as i128) << 64) | (parts.lo as i128)),
+        ScVal::I64(v) => Some(*v as i128),
+        ScVal::U64(v) => Some(*v as i128),
+        ScVal::I32(v) => Some(*v as i128),
+        ScVal::U32(v) => Some(*v as i128),
+        _ => None,
+    }
+}
+
+/// Standalone helper to parse pool state from contract data XDR
+pub fn parse_soroban_pool_state(
+    contract_data: &serde_json::Value,
+    pool_address: &str,
+) -> Result<PoolState> {
+    let xdr_base64 = contract_data
+        .get("xdr")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            let err_msg = "missing `xdr` field in contract data response".to_string();
+            warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+            IndexerError::SorobanRpc(err_msg)
+        })?;
+
+    // 1. Decode base64 XDR as LedgerEntry or LedgerEntryData
+    let ledger_entry_data = match LedgerEntry::from_xdr_base64(xdr_base64, Limits::none()) {
+        Ok(entry) => entry.data,
+        Err(_) => match LedgerEntryData::from_xdr_base64(xdr_base64, Limits::none()) {
+            Ok(data) => data,
+            Err(e) => {
+                let err_msg = format!(
+                    "failed to parse XDR as LedgerEntry or LedgerEntryData: {}",
+                    e
+                );
+                warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+                return Err(IndexerError::SorobanRpc(err_msg));
+            }
+        },
+    };
+
+    // 2. Extract ContractDataEntry
+    let contract_data_entry = match ledger_entry_data {
+        LedgerEntryData::ContractData(entry) => entry,
+        _ => {
+            let err_msg = "ledger entry is not ContractData".to_string();
+            warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+            return Err(IndexerError::SorobanRpc(err_msg));
+        }
+    };
+
+    // 3. Extract ContractInstance
+    let instance = match contract_data_entry.val {
+        ScVal::ContractInstance(instance) => instance,
+        _ => {
+            let err_msg = "contract data val is not ContractInstance".to_string();
+            warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+            return Err(IndexerError::SorobanRpc(err_msg));
+        }
+    };
+
+    // 4. Parse the instance storage map
+    let storage = instance.storage.ok_or_else(|| {
+        let err_msg = "instance storage map is empty".to_string();
+        warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+        IndexerError::SorobanRpc(err_msg)
+    })?;
+
+    let mut token_a: Option<String> = None;
+    let mut token_b: Option<String> = None;
+    let mut reserve_a: Option<i128> = None;
+    let mut reserve_b: Option<i128> = None;
+    let mut fee_bps: Option<i32> = None;
+
+    for entry in storage.iter() {
+        let key_str = match &entry.key {
+            ScVal::Symbol(sym) => sym.to_string(),
+            _ => continue,
+        };
+
+        match key_str.as_str() {
+            "token_a" | "token_x" | "asset_a" | "token_0" => {
+                if let ScVal::Address(addr) = &entry.val {
+                    token_a = Some(addr.to_string());
+                }
+            }
+            "token_b" | "token_y" | "asset_b" | "token_1" => {
+                if let ScVal::Address(addr) = &entry.val {
+                    token_b = Some(addr.to_string());
+                }
+            }
+            "reserve_a" | "res_a" | "reserve_x" | "res_0" => {
+                reserve_a = parse_scval_integer(&entry.val);
+            }
+            "reserve_b" | "res_b" | "reserve_y" | "res_1" => {
+                reserve_b = parse_scval_integer(&entry.val);
+            }
+            "fee_bps" | "fee" | "fee_rate" => {
+                fee_bps = parse_scval_integer(&entry.val).map(|v| v as i32);
+            }
+            _ => {}
+        }
+    }
+
+    let token_a = token_a.ok_or_else(|| {
+        let err_msg = "failed to find token_a in pool storage".to_string();
+        warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+        IndexerError::SorobanRpc(err_msg)
+    })?;
+
+    let token_b = token_b.ok_or_else(|| {
+        let err_msg = "failed to find token_b in pool storage".to_string();
+        warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+        IndexerError::SorobanRpc(err_msg)
+    })?;
+
+    let reserve_a = reserve_a.ok_or_else(|| {
+        let err_msg = "failed to find reserve_a in pool storage".to_string();
+        warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+        IndexerError::SorobanRpc(err_msg)
+    })?;
+
+    let reserve_b = reserve_b.ok_or_else(|| {
+        let err_msg = "failed to find reserve_b in pool storage".to_string();
+        warn!("XDR decode fallback: pool {} - {}", pool_address, err_msg);
+        IndexerError::SorobanRpc(err_msg)
+    })?;
+
+    let ledger_sequence = contract_data
+        .get("lastModifiedLedgerSeq")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let fee_bps = fee_bps.unwrap_or(30);
+
+    Ok(PoolState {
+        address: pool_address.to_string(),
+        token_a,
+        token_b,
+        reserve_a,
+        reserve_b,
+        fee_bps,
+        ledger_sequence,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Verifies that the SQL call to upsert_amm_pool_reserve uses exactly 9 bind
+    /// parameters, matching the 9-arg Postgres function signature added in migration
+    /// 0011_trace_context_provenance (7 core args + source_trace_id + source_span_id).
+    #[test]
+    fn upsert_amm_pool_reserve_query_has_nine_args() {
+        let count = (1..=20)
+            .filter(|n| UPSERT_AMM_POOL_RESERVE_SQL.contains(&format!("${}", n)))
+            .count();
+        assert_eq!(
+            count, 9,
+            "SQL must bind 9 args: 7 core + trace_id + span_id"
+        );
+    }
+
+    /// Verifies TraceContext fields are present and bindable (non-panicking default).
+    #[test]
+    fn trace_context_default_is_bindable() {
+        let tc = TraceContext::default();
+        // Both fields must be strings (will bind as TEXT in sqlx)
+        let _: &str = &tc.trace_id;
+        let _: &str = &tc.span_id;
+    }
+    use stellar_xdr::curr::{
+        ContractDataDurability, ContractDataEntry, ContractExecutable, ExtensionPoint, Hash,
+        Int128Parts, LedgerEntryData, ScAddress, ScContractInstance, ScMap, ScMapEntry, ScSymbol,
+        ScVal, WriteXdr,
+    };
+
+    #[test]
+    fn test_parse_soroban_pool_state_success() {
+        let token_a_addr = ScAddress::Contract(Hash([11; 32]));
+        let token_b_addr = ScAddress::Contract(Hash([22; 32]));
+
+        let storage_entries = vec![
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol("token_a".try_into().unwrap())),
+                val: ScVal::Address(token_a_addr.clone()),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol("token_b".try_into().unwrap())),
+                val: ScVal::Address(token_b_addr.clone()),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol("reserve_a".try_into().unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 123456789,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol("reserve_b".try_into().unwrap())),
+                val: ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: 987654321,
+                }),
+            },
+            ScMapEntry {
+                key: ScVal::Symbol(ScSymbol("fee_bps".try_into().unwrap())),
+                val: ScVal::U32(25),
+            },
+        ];
+
+        let storage_map = ScMap::try_from(storage_entries).unwrap();
+
+        let instance = ScContractInstance {
+            executable: ContractExecutable::Wasm(Hash([0; 32])),
+            storage: Some(storage_map),
+        };
+
+        let entry = LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(Hash([33; 32])),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(instance),
+        });
+
+        let base64_xdr = entry.to_xdr_base64(Limits::none()).unwrap();
+
+        let contract_data = json!({
+            "xdr": base64_xdr,
+            "lastModifiedLedgerSeq": 99999
+        });
+
+        let parsed = parse_soroban_pool_state(&contract_data, "CCONTRACTADDRESS").unwrap();
+
+        assert_eq!(parsed.address, "CCONTRACTADDRESS");
+        assert_eq!(parsed.token_a, token_a_addr.to_string());
+        assert_eq!(parsed.token_b, token_b_addr.to_string());
+        assert_eq!(parsed.reserve_a, 123456789);
+        assert_eq!(parsed.reserve_b, 987654321);
+        assert_eq!(parsed.fee_bps, 25);
+        assert_eq!(parsed.ledger_sequence, 99999);
+    }
+
+    #[test]
+    fn test_parse_soroban_pool_state_missing_xdr() {
+        let contract_data = json!({
+            "lastModifiedLedgerSeq": 99999
+        });
+
+        let res = parse_soroban_pool_state(&contract_data, "CPOOLADDR");
+        assert!(res.is_err());
+        let err_str = format!("{}", res.unwrap_err());
+        assert!(err_str.contains("missing `xdr`"));
+    }
+
+    #[test]
+    fn test_parse_soroban_pool_state_invalid_xdr() {
+        let contract_data = json!({
+            "xdr": "INVALIDXDRDATABASE64STRING!!!",
+            "lastModifiedLedgerSeq": 99999
+        });
+
+        let res = parse_soroban_pool_state(&contract_data, "CPOOLADDR");
+        assert!(res.is_err());
+        let err_str = format!("{}", res.unwrap_err());
+        assert!(err_str.contains("failed to parse XDR"));
     }
 }
