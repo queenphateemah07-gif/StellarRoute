@@ -10,9 +10,10 @@
 
 import type {
   ApiResponse,
+  CacheMetricsResponse,
   HealthStatus,
   Orderbook,
-  PriceHistoryWindow,
+  PoolStatsResponse,
   PriceHistoryResponse,
   PairsResponse,
   PriceQuote,
@@ -308,6 +309,16 @@ export class StellarRouteClient {
     return this.request<HealthStatus>('/health', opts);
   }
 
+  /** GET /metrics/cache — quote cache hit/miss metrics */
+  getCacheMetrics(opts?: FetchOptions): Promise<CacheMetricsResponse> {
+    return this.request<CacheMetricsResponse>('/metrics/cache', opts);
+  }
+
+  /** GET /metrics/pool — database connection pool statistics */
+  getPoolStats(opts?: FetchOptions): Promise<PoolStatsResponse> {
+    return this.request<PoolStatsResponse>('/metrics/pool', opts);
+  }
+
   /** GET /health/deps — external dependency health check */
   getDepsHealth(opts?: FetchOptions): Promise<DepsHealthStatus> {
     return this.request<DepsHealthStatus>('/health/deps', opts);
@@ -473,14 +484,9 @@ export class StellarRouteClient {
   getPriceHistory(
     base: string,
     quote: string,
-    opts?: FetchOptions & { window?: PriceHistoryWindow },
+    opts?: FetchOptions,
   ): Promise<PriceHistoryResponse> {
-    const params = new URLSearchParams();
-    if (opts?.window !== undefined) {
-      params.set('window', opts.window);
-    }
-    const qs = params.toString();
-    const path = `/api/v1/price-history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}${qs ? `?${qs}` : ''}`;
+    const path = `/api/v1/price-history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}`;
     return this.request<PriceHistoryResponse>(path, opts);
   }
 
