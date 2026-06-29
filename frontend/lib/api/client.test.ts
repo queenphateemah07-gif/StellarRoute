@@ -413,17 +413,17 @@ describe('getPriceHistory', () => {
     expect(url.search).toBe('');
   });
 
-  it('calls GET without window query params (window not yet client-configurable)', async () => {
+  it('forwards optional window query params when provided', async () => {
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       ok(priceHistoryData),
     );
 
     await new StellarRouteClient({
       baseUrl: 'https://api.example.com',
-    }).getPriceHistory('native', 'USDC');
+    }).getPriceHistory('native', 'USDC', { window: '24h' });
 
     const url = new URL(spy.mock.calls[0]?.[0] as string);
-    expect(url.searchParams.get('window')).toBeNull();
+    expect(url.searchParams.get('window')).toBe('24h');
   });
 
   it('surfaces API errors as StellarRouteApiError', async () => {
