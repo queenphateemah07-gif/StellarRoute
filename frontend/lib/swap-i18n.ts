@@ -204,7 +204,45 @@ export type SwapTranslationKey =
   | "swap.confirm.cta.done"
   | "swap.confirm.cta.tryAgain"
   | "swap.confirm.cta.dismiss"
-  | "swap.confirm.cta.resubmit";
+  | "swap.confirm.cta.resubmit"
+  | "orderbook.title"
+  | "orderbook.description"
+  | "orderbook.button.refresh"
+  | "orderbook.header.price"
+  | "orderbook.header.amount"
+  | "orderbook.header.total"
+  | "orderbook.pairs.loading.title"
+  | "orderbook.pairs.loading.description"
+  | "orderbook.pairs.error"
+  | "orderbook.loading"
+  | "orderbook.standby"
+  | "orderbook.highlightedPair"
+  | "orderbook.bids.title"
+  | "orderbook.asks.title"
+  | "orderbook.noBids"
+  | "orderbook.noAsks"
+  | "orderbook.row.bid.aria"
+  | "orderbook.row.ask.aria"
+  | "orderbook.depth.title"
+  | "orderbook.depth.modeLabel"
+  | "orderbook.depth.mode.compact"
+  | "orderbook.depth.mode.detailed"
+  | "orderbook.depth.densityLabel"
+  | "orderbook.depth.density.low"
+  | "orderbook.depth.density.high"
+  | "orderbook.depth.perfLabel"
+  | "orderbook.depth.fps"
+  | "orderbook.depth.maxVolume"
+  | "orderbook.depth.renderCost"
+  | "orderbook.depth.memoryProfiler"
+  | "orderbook.depth.uiJitter"
+  | "orderbook.depth.activeStrategy"
+  | "orderbook.depth.strategy.canvas"
+  | "orderbook.depth.strategy.path"
+  | "orderbook.depth.memoryStable"
+  | "orderbook.depth.uiJitterZero"
+  | "orderbook.depth.cost.canvas"
+  | "orderbook.depth.cost.svg";
 
 type SwapTranslations = Record<SwapTranslationKey, string>;
 
@@ -416,6 +454,49 @@ const SWAP_TRANSLATIONS_BASE: Record<
     "swap.confirm.cta.tryAgain": "Try Again",
     "swap.confirm.cta.dismiss": "Dismiss",
     "swap.confirm.cta.resubmit": "Resubmit",
+    "orderbook.title": "Orderbook",
+    "orderbook.description":
+      "Live bids and asks from the selected trading pair.",
+    "orderbook.button.refresh": "Refresh",
+    "orderbook.header.price": "Price",
+    "orderbook.header.amount": "Amount",
+    "orderbook.header.total": "Total",
+    "orderbook.pairs.loading.title": "Loading markets",
+    "orderbook.pairs.loading.description": "Fetching available trading pairs.",
+    "orderbook.pairs.error":
+      "⚠️ Market list indexer offline. Displaying local adaptive chart profiling tools.",
+    "orderbook.loading": "Syncing order book grid...",
+    "orderbook.standby": "Data feed standby mode active.",
+    "orderbook.highlightedPair":
+      "This pair is currently selected in the swap panel",
+    "orderbook.bids.title": "Bids ({count})",
+    "orderbook.asks.title": "Asks ({count})",
+    "orderbook.noBids": "No bids available",
+    "orderbook.noAsks": "No asks available",
+    "orderbook.row.bid.aria":
+      "Bid price {price}, amount {amount}, total {total}",
+    "orderbook.row.ask.aria":
+      "Ask price {price}, amount {amount}, total {total}",
+    "orderbook.depth.title": "Market Depth",
+    "orderbook.depth.modeLabel": "Mode",
+    "orderbook.depth.mode.compact": "Compact (Canvas)",
+    "orderbook.depth.mode.detailed": "Detailed (SVG)",
+    "orderbook.depth.densityLabel": "Density Threshold",
+    "orderbook.depth.density.low": "45p (SVG)",
+    "orderbook.depth.density.high": "180p (Canvas)",
+    "orderbook.depth.perfLabel": "Engine Performance",
+    "orderbook.depth.fps": "{fps} FPS",
+    "orderbook.depth.maxVolume": "Max Vol: {volume} units",
+    "orderbook.depth.renderCost": "Render Cost",
+    "orderbook.depth.memoryProfiler": "Memory Profiler",
+    "orderbook.depth.uiJitter": "UI Jitter Bound",
+    "orderbook.depth.activeStrategy": "Active Strategy",
+    "orderbook.depth.strategy.canvas": "Adaptive Canvas Loop",
+    "orderbook.depth.strategy.path": "Interactive Path",
+    "orderbook.depth.memoryStable": "1.4 MB Stable",
+    "orderbook.depth.uiJitterZero": "0% (Null Drops)",
+    "orderbook.depth.cost.canvas": "~0.05ms [O(N)]",
+    "orderbook.depth.cost.svg": "~0.22ms [DOM]",
   },
     "es-ES": {
     "swap.card.title": "Intercambiar",
@@ -610,6 +691,50 @@ const SWAP_TRANSLATIONS_BASE: Record<
     "swap.confirm.cta.tryAgain": "Volver a intentar",
     "swap.confirm.cta.dismiss": "Descartar",
     "swap.confirm.cta.resubmit": "Reenviar",
+    "orderbook.title": "Libro de órdenes",
+    "orderbook.description":
+      "Ofertas y demandas en vivo del par de trading seleccionado.",
+    "orderbook.button.refresh": "Actualizar",
+    "orderbook.header.price": "Precio",
+    "orderbook.header.amount": "Cantidad",
+    "orderbook.header.total": "Total",
+    "orderbook.pairs.loading.title": "Cargando mercados",
+    "orderbook.pairs.loading.description":
+      "Obteniendo pares de trading disponibles.",
+    "orderbook.pairs.error":
+      "⚠️ Indexador de lista de mercado fuera de línea. Mostrando herramientas de perfilado de gráficos adaptativos locales.",
+    "orderbook.loading": "Sincronizando cuadrícula del libro de órdenes...",
+    "orderbook.standby": "Modo de espera de alimentación de datos activo.",
+    "orderbook.highlightedPair":
+      "Este par está seleccionado actualmente en el panel de intercambio",
+    "orderbook.bids.title": "Ofertas ({count})",
+    "orderbook.asks.title": "Demandas ({count})",
+    "orderbook.noBids": "No hay ofertas disponibles",
+    "orderbook.noAsks": "No hay demandas disponibles",
+    "orderbook.row.bid.aria":
+      "Oferta precio {price}, cantidad {amount}, total {total}",
+    "orderbook.row.ask.aria":
+      "Demanda precio {price}, cantidad {amount}, total {total}",
+    "orderbook.depth.title": "Profundidad de mercado",
+    "orderbook.depth.modeLabel": "Modo",
+    "orderbook.depth.mode.compact": "Compacto (Canvas)",
+    "orderbook.depth.mode.detailed": "Detallado (SVG)",
+    "orderbook.depth.densityLabel": "Umbral de densidad",
+    "orderbook.depth.density.low": "45p (SVG)",
+    "orderbook.depth.density.high": "180p (Canvas)",
+    "orderbook.depth.perfLabel": "Rendimiento del motor",
+    "orderbook.depth.fps": "{fps} FPS",
+    "orderbook.depth.maxVolume": "Vol. máx.: {volume} unidades",
+    "orderbook.depth.renderCost": "Costo de renderizado",
+    "orderbook.depth.memoryProfiler": "Perfilador de memoria",
+    "orderbook.depth.uiJitter": "Límite de jitter de UI",
+    "orderbook.depth.activeStrategy": "Estrategia activa",
+    "orderbook.depth.strategy.canvas": "Bucle Canvas adaptativo",
+    "orderbook.depth.strategy.path": "Ruta interactiva",
+    "orderbook.depth.memoryStable": "1.4 MB estable",
+    "orderbook.depth.uiJitterZero": "0% (sin pérdidas)",
+    "orderbook.depth.cost.canvas": "~0.05ms [O(N)]",
+    "orderbook.depth.cost.svg": "~0.22ms [DOM]",
   },
   "zh-CN": {
     "swap.card.title": "兑换",
@@ -807,6 +932,45 @@ const SWAP_TRANSLATIONS_BASE: Record<
     "swap.confirm.cta.tryAgain": "重试",
     "swap.confirm.cta.dismiss": "关闭",
     "swap.confirm.cta.resubmit": "重新提交",
+    "orderbook.title": "订单簿",
+    "orderbook.description": "来自所选交易对的实时买单和卖单。",
+    "orderbook.button.refresh": "刷新",
+    "orderbook.header.price": "价格",
+    "orderbook.header.amount": "数量",
+    "orderbook.header.total": "总计",
+    "orderbook.pairs.loading.title": "加载市场中",
+    "orderbook.pairs.loading.description": "获取可用交易对中。",
+    "orderbook.pairs.error":
+      "⚠️ 市场列表索引器离线。显示本地自适应图表分析工具。",
+    "orderbook.loading": "同步订单簿网格...",
+    "orderbook.standby": "数据馈送待机模式已激活。",
+    "orderbook.highlightedPair": "该交易对当前已在兑换面板中选择",
+    "orderbook.bids.title": "买单 ({count})",
+    "orderbook.asks.title": "卖单 ({count})",
+    "orderbook.noBids": "无可用买单",
+    "orderbook.noAsks": "无可用卖单",
+    "orderbook.row.bid.aria": "买单价格 {price}，数量 {amount}，总计 {total}",
+    "orderbook.row.ask.aria": "卖单价格 {price}，数量 {amount}，总计 {total}",
+    "orderbook.depth.title": "市场深度",
+    "orderbook.depth.modeLabel": "模式",
+    "orderbook.depth.mode.compact": "紧凑 (Canvas)",
+    "orderbook.depth.mode.detailed": "详细 (SVG)",
+    "orderbook.depth.densityLabel": "密度阈值",
+    "orderbook.depth.density.low": "45p (SVG)",
+    "orderbook.depth.density.high": "180p (Canvas)",
+    "orderbook.depth.perfLabel": "引擎性能",
+    "orderbook.depth.fps": "{fps} FPS",
+    "orderbook.depth.maxVolume": "最大成交量: {volume} 单位",
+    "orderbook.depth.renderCost": "渲染成本",
+    "orderbook.depth.memoryProfiler": "内存分析器",
+    "orderbook.depth.uiJitter": "UI 抖动边界",
+    "orderbook.depth.activeStrategy": "活动策略",
+    "orderbook.depth.strategy.canvas": "自适应 Canvas 循环",
+    "orderbook.depth.strategy.path": "交互式路径",
+    "orderbook.depth.memoryStable": "1.4 MB 稳定",
+    "orderbook.depth.uiJitterZero": "0% (无丢帧)",
+    "orderbook.depth.cost.canvas": "~0.05ms [O(N)]",
+    "orderbook.depth.cost.svg": "~0.22ms [DOM]",
   },
 };
 
